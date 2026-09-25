@@ -1,0 +1,75 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with eldercare companion settings and profile details",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 128 },
+        "photoURL": { "type": "string", "maxLength": 512 },
+        "seniorName": { "type": "string", "maxLength": 64 },
+        "seniorAge": { "type": "string", "maxLength": 8 },
+        "liveVoice": { "type": "string", "maxLength": 32 },
+        "liveLang": { "type": "string", "maxLength": 16 },
+        "speechRate": { "type": "string", "maxLength": 16 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "displayName", "email"]
+    },
+    "HealthCheckIn": {
+      "title": "HealthCheckIn",
+      "description": "Daily spoken check-in log and symptom assessment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string" },
+        "notes": { "type": "string", "maxLength": 2048 },
+        "symptom": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "maxLength": 32 },
+        "rec": { "type": "string", "maxLength": 1024 }
+      },
+      "required": ["id", "userId", "notes", "symptom"]
+    },
+    "VitalReading": {
+      "title": "VitalReading",
+      "description": "Patient vital metrics and biometric readings logged or synced from smart watch",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "dateStr": { "type": "string", "maxLength": 64 },
+        "bpSystolic": { "type": "number" },
+        "bpDiastolic": { "type": "number" },
+        "heartRate": { "type": "number" },
+        "spo2": { "type": "number" },
+        "temperature": { "type": "number" },
+        "bloodSugar": { "type": "number" },
+        "height": { "type": "number" },
+        "weight": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 1024 },
+        "source": { "type": "string", "maxLength": 64 },
+        "deviceModel": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "userId", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Elder profile and preferences"
+    },
+    "/users/{userId}/checkins/{checkInId}": {
+      "schema": { "$ref": "#/entities/HealthCheckIn" },
+      "description": "Historical health check-ins and symptom notes"
+    },
+    "/users/{userId}/vitals/{vitalId}": {
+      "schema": { "$ref": "#/entities/VitalReading" },
+      "description": "Vital readings and smart watch biometric streams"
+    }
+  }
+}

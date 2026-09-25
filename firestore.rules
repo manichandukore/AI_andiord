@@ -1,0 +1,102 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default-deny catch-all (Pillar 4 Global Safety Net)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'email'])
+        && data.keys().hasOnly(['uid', 'displayName', 'email', 'photoURL', 'seniorName', 'seniorAge', 'liveVoice', 'liveLang', 'speechRate', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() > 0 && data.uid.size() <= 128 && data.uid == request.auth.uid
+        && data.displayName is string && data.displayName.size() > 0 && data.displayName.size() <= 128
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 128
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512))
+        && (!('seniorName' in data) || (data.seniorName is string && data.seniorName.size() <= 64))
+        && (!('seniorAge' in data) || (data.seniorAge is string && data.seniorAge.size() <= 8))
+        && (!('liveVoice' in data) || (data.liveVoice is string && data.liveVoice.size() <= 32))
+        && (!('liveLang' in data) || (data.liveLang is string && data.liveLang.size() <= 16))
+        && (!('speechRate' in data) || (data.speechRate is string && data.speechRate.size() <= 16))
+        && (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidHealthCheckIn(data) {
+      return data.keys().hasAll(['id', 'userId', 'notes', 'symptom'])
+        && data.keys().hasOnly(['id', 'userId', 'timestamp', 'notes', 'symptom', 'status', 'rec'])
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128 && data.userId == request.auth.uid
+        && data.notes is string && data.notes.size() > 0 && data.notes.size() <= 2048
+        && data.symptom is string && data.symptom.size() > 0 && data.symptom.size() <= 64
+        && (!('timestamp' in data) || (data.timestamp is string && data.timestamp.size() <= 64))
+        && (!('status' in data) || (data.status is string && data.status.size() <= 32))
+        && (!('rec' in data) || (data.rec is string && data.rec.size() <= 1024));
+    }
+
+    function isValidVitalReading(data) {
+      return data.keys().hasAll(['id', 'userId', 'timestamp'])
+        && data.keys().hasOnly(['id', 'userId', 'timestamp', 'dateStr', 'bpSystolic', 'bpDiastolic', 'heartRate', 'spo2', 'temperature', 'bloodSugar', 'height', 'weight', 'notes', 'source', 'deviceModel'])
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128 && data.userId == request.auth.uid
+        && data.timestamp is string && data.timestamp.size() <= 64
+        && (!('dateStr' in data) || (data.dateStr is string && data.dateStr.size() <= 64))
+        && (!('bpSystolic' in data) || data.bpSystolic is number)
+        && (!('bpDiastolic' in data) || data.bpDiastolic is number)
+        && (!('heartRate' in data) || data.heartRate is number)
+        && (!('spo2' in data) || data.spo2 is number)
+        && (!('temperature' in data) || data.temperature is number)
+        && (!('bloodSugar' in data) || data.bloodSugar is number)
+        && (!('height' in data) || data.height is number)
+        && (!('weight' in data) || data.weight is number)
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 1024))
+        && (!('source' in data) || (data.source is string && data.source.size() <= 64))
+        && (!('deviceModel' in data) || (data.deviceModel is string && data.deviceModel.size() <= 128));
+    }
+
+    // User Profile matching rule
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming());
+      allow update: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming()) && incoming().uid == existing().uid;
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // Check-ins subcollection
+      match /checkins/{checkInId} {
+        allow get, list: if isOwner(userId) && isValidId(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(checkInId) && isValidHealthCheckIn(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(checkInId) && isValidHealthCheckIn(incoming()) && incoming().userId == existing().userId;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(checkInId);
+      }
+
+      // Vitals subcollection
+      match /vitals/{vitalId} {
+        allow get, list: if isOwner(userId) && isValidId(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(vitalId) && isValidVitalReading(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(vitalId) && isValidVitalReading(incoming()) && incoming().userId == existing().userId;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(vitalId);
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "AI Companion - Wellness OS",
+  "description": "An AI-powered elder wellness monitoring companion dashboard with interactive body map, check-in logs, voice companion, and care circle.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
