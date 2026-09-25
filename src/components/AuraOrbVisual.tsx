@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useWakeWord } from '../context/WakeWordContext';
-import { detectPainInText } from '../utils/painDetection';
+import { useWakeWord, getAppLanguage, getRecordsAndTabletsSummary } from '../context/WakeWordContext';
+import { detectPainInText, detectPainProgressInText, syncHealthProgress } from '../utils/painDetection';
+import {
+  analyzeHealthSymptoms,
+  detectContactRequest,
+  executeEmergencyWorkflow,
+} from '../utils/emergencyDetection';
 
 interface AuraOrbVisualProps {
   userName?: string;
@@ -18,7 +23,7 @@ export function AuraOrbVisual({
   const { aiName, wakeWordEnabled, isListening, triggerWakeWord } = useWakeWord();
 
   // Read configured voice and language from Settings / localStorage
-  const [liveLang, setLiveLang] = useState(() => localStorage.getItem('aura_live_lang') || 'te-IN');
+  const [liveLang, setLiveLang] = useState(() => getAppLanguage());
   const [liveVoice, setLiveVoice] = useState<LiveVoiceName>(
     () => (localStorage.getItem('aura_live_voice') as LiveVoiceName) || 'Aoede'
   );
@@ -48,9 +53,8 @@ export function AuraOrbVisual({
   // Listen for storage changes from Settings tab
   useEffect(() => {
     const handleStorageChange = () => {
-      const storedLang = localStorage.getItem('aura_live_lang');
+      setLiveLang(getAppLanguage());
       const storedVoice = localStorage.getItem('aura_live_voice') as LiveVoiceName;
-      if (storedLang) setLiveLang(storedLang);
       if (storedVoice) setLiveVoice(storedVoice);
     };
 
@@ -347,18 +351,20 @@ export function AuraOrbVisual({
       };
 
       ws.onerror = (err) => {
-        console.error('WebSocket error on live orb:', err);
-        setConnectionStatus('error');
-        setStatusText('LIVE API CONNECTING... TAP ORB TO RETRY');
+        console.warn('Live WebSocket fallback to speech voice mode:', err);
+        setConnectionStatus('idle');
+        setStatusText(`🎙️ VOICE READY • TAP OR SPEAK`);
+        fallbackSpeechRecognition();
       };
 
       ws.onclose = () => {
         setConnectionStatus('idle');
       };
     } catch (err) {
-      console.error('Failed to create WebSocket on live orb:', err);
-      setConnectionStatus('error');
-      setStatusText('GEMINI 3.8 LIVE • TAP FOR VOICE CALL');
+      console.warn('Failed to connect live WebSocket, using speech mode:', err);
+      setConnectionStatus('idle');
+      setStatusText(`🎙️ VOICE READY • TAP OR SPEAK`);
+      fallbackSpeechRecognition();
     }
   };
 
@@ -380,27 +386,148 @@ export function AuraOrbVisual({
   };
 
   // Send a quick text prompt to Gemini Live API
-  const sendTextMessage = (text: string) => {
+  const sendTextMessage = async (text: string) => {
     if (!text.trim()) return;
     setLastUserMessage(text);
     setLastModelMessage('');
     interruptPlayback();
 
-    // Check if user communicated pain to update the Body Map
-    const painCheck = detectPainInText(text);
-    if (painCheck && typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('aura_pain_reported', {
-          detail: {
-            bodyPart: painCheck.bodyPart,
-            label: painCheck.bodyPartLabel,
-            symptom: painCheck.symptomSummary,
-            rec: painCheck.rec,
-            source: 'Aura Voice Orb',
-            timestamp: Date.now(),
-          },
-        })
-      );
+    // 1. Check for explicit contact request: "Call my son", "Phone my son", "Call my daughter", "Message my son"
+    const contactReq = detectContactRequest(text);
+    if (contactReq) {
+      const member = contactReq.resolvedMember;
+      const cleanPhone = member.phone.replace(/[^0-9+]/g, '');
+
+      if (contactReq.type === 'CALL') {
+        const spokenMsg =
+          liveLang === 'te-IN'
+            ? `మీరు కోరినట్లుగా మీ ${member.role} ${member.name} గారికి ఫోన్ కనెక్ట్ చేస్తున్నాను.`
+            : liveLang === 'hi-IN'
+            ? `आपके कहे अनुसार आपके ${member.role} ${member.name} जी को कॉल लगाया जा रहा है।`
+            : `Connecting call to ${member.name} (${member.role}) right now.`;
+
+        setLastModelMessage(spokenMsg);
+        setStatusText(`📞 CALLING ${member.name.toUpperCase()} (${member.phone})`);
+
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          const u = new SpeechSynthesisUtterance(spokenMsg);
+          u.lang = liveLang;
+          window.speechSynthesis.speak(u);
+        }
+
+        try {
+          window.location.href = `tel:${cleanPhone}`;
+        } catch {}
+
+        window.dispatchEvent(
+          new CustomEvent('aura_emergency_alert_triggered', {
+            detail: {
+              symptomAnalysis: {
+                hasSymptom: true,
+                primaryBodyPart: 'heart',
+                secondaryBodyParts: [],
+                severity: 'SERIOUS',
+                isEmergency: true,
+                symptomsDetected: [`Direct Call to ${member.name} (${member.role}) Requested`],
+                clinicalSummary: `${userName} explicitly requested to call ${member.name} (${member.role}) at ${member.phone}.`,
+                patientName: userName,
+                recommendedAction: 'Keep phone line open for family connection.',
+                userQuote: text,
+                spokenGuidance: { english: spokenMsg, telugu: spokenMsg, hindi: spokenMsg },
+              },
+              contact: member,
+              callUrl: `tel:${cleanPhone}`,
+              whatsappUrl: `https://wa.me/${cleanPhone.replace(/^\+/, '')}?text=${encodeURIComponent(`Urgent Call Request from ${userName}: Please contact immediately.`)}`,
+              smsUrl: `sms:${cleanPhone}?body=${encodeURIComponent(`Urgent Call Request from ${userName}`)}`,
+              partsUpdated: ['heart'],
+              actionReport: `Initiated direct call to ${member.name} (${member.role}) at ${member.phone}.`,
+            },
+          })
+        );
+        return;
+      } else {
+        // Message requested
+        const alertMsg = contactReq.customMessage
+          ? `Message from ${userName}: ${contactReq.customMessage}`
+          : `Urgent message from ${userName}: Please check on her immediately.`;
+        const waUrl = `https://wa.me/${cleanPhone.replace(/^\+/, '')}?text=${encodeURIComponent(alertMsg)}`;
+
+        const spokenMsg =
+          liveLang === 'te-IN'
+            ? `మీ ${member.role} ${member.name} గారికి సందేశం పంపాను.`
+            : liveLang === 'hi-IN'
+            ? `आपके ${member.role} ${member.name} जी को संदेश भेज दिया गया है।`
+            : `Emergency message dispatched to ${member.name} (${member.role}).`;
+
+        setLastModelMessage(spokenMsg);
+        setStatusText(`💬 SENT MESSAGE TO ${member.name.toUpperCase()}`);
+
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          const u = new SpeechSynthesisUtterance(spokenMsg);
+          u.lang = liveLang;
+          window.speechSynthesis.speak(u);
+        }
+
+        try {
+          window.open(waUrl, '_blank');
+        } catch {}
+        return;
+      }
+    }
+
+    // 2. Health Symptom & Severity Analysis (Normal, Mild, Moderate, Serious/Emergency)
+    const symptomAnalysis = analyzeHealthSymptoms(text, userName);
+    if (symptomAnalysis.hasSymptom) {
+      // Automatic Body Map Dot Updates without requiring manual dot addition
+      syncHealthProgress(symptomAnalysis.primaryBodyPart, 'active', text);
+      for (const sec of symptomAnalysis.secondaryBodyParts) {
+        syncHealthProgress(sec, 'active', text);
+      }
+
+      // If SERIOUS or EMERGENCY condition detected
+      if (symptomAnalysis.isEmergency) {
+        await executeEmergencyWorkflow(symptomAnalysis);
+        const spoken =
+          liveLang === 'te-IN'
+            ? symptomAnalysis.spokenGuidance.telugu
+            : liveLang === 'hi-IN'
+            ? symptomAnalysis.spokenGuidance.hindi
+            : symptomAnalysis.spokenGuidance.english;
+
+        setLastModelMessage(spoken);
+        setStatusText(`🚨 EMERGENCY: ${symptomAnalysis.symptomsDetected.join(' + ').toUpperCase()}`);
+
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          const u = new SpeechSynthesisUtterance(spoken);
+          u.lang = liveLang;
+          window.speechSynthesis.speak(u);
+        }
+        return;
+      }
+    }
+
+    // 3. Check if user communicated pain progress (resolved -> remove dot, improving -> green dot, active -> red dot)
+    const progressCheck = detectPainProgressInText(text);
+    if (progressCheck) {
+      syncHealthProgress(progressCheck.bodyPart, progressCheck.status, text);
+    } else {
+      const painCheck = detectPainInText(text);
+      if (painCheck) {
+        syncHealthProgress(painCheck.bodyPart, 'active', text);
+      }
+    }
+
+    // 4. Check if user is asking about records and tablets
+    const recordsSummary = getRecordsAndTabletsSummary(text.toLowerCase(), userName, liveLang as any);
+    if (recordsSummary) {
+      setLastModelMessage(recordsSummary);
+      setStatusText(`⚡ AURA • HEALTH RECORDS & TABLETS`);
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        const u = new SpeechSynthesisUtterance(recordsSummary);
+        u.lang = liveLang;
+        window.speechSynthesis.speak(u);
+      }
+      return;
     }
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -951,9 +1078,13 @@ export function AuraOrbVisual({
           {/* Quick Spoken Questions Chips */}
           <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
             {[
+              { label: '🚨 Severe Chest Pain & Dizziness', text: 'My heart is hurting very badly and I am feeling dizzy.' },
+              { label: '📞 Call my son', text: 'Call my son.' },
+              { label: 'Headache', text: 'I have a headache and my head is spinning.' },
+              { label: 'Stomach pain', text: 'I have sharp stomach pain and nausea.' },
+              { label: 'Breathing difficulty', text: 'I am having breathing difficulty and chest tightness.' },
+              { label: 'Knee joint pain', text: 'My right knee has stiffness today.' },
               { label: 'నమస్కారం బాగున్నారా?', text: 'నమస్కారం! నేను రాజమ్మను, నా ఆరోగ్యం ఎలా ఉంది?' },
-              { label: 'Medicine check', text: 'Did I take my afternoon tablet?' },
-              { label: 'Knee joint pain', text: 'My right knee has mild stiffness today.' },
             ].map((chip, idx) => (
               <button
                 key={idx}
@@ -965,16 +1096,16 @@ export function AuraOrbVisual({
                   whiteSpace: 'nowrap',
                   padding: '4px 8px',
                   borderRadius: 10,
-                  background: '#f1f5f9',
-                  border: '1px solid #cbd5e1',
-                  color: '#334155',
+                  background: chip.label.includes('🚨') ? '#fee2e2' : chip.label.includes('📞') ? '#dcfce7' : '#f1f5f9',
+                  border: `1px solid ${chip.label.includes('🚨') ? '#fca5a5' : chip.label.includes('📞') ? '#86efac' : '#cbd5e1'}`,
+                  color: chip.label.includes('🚨') ? '#b91c1c' : chip.label.includes('📞') ? '#15803d' : '#334155',
                   fontSize: 10,
                   fontWeight: 700,
                   cursor: 'pointer',
                   flexShrink: 0,
                 }}
               >
-                💬 {chip.label}
+                {chip.label}
               </button>
             ))}
           </div>

@@ -7,7 +7,13 @@ import {
   detectPainInText,
   BodyPartKey,
   BodyPartObservation,
+  PainStatus,
+  syncHealthProgress,
 } from '../utils/painDetection';
+import {
+  analyzeHealthSymptoms,
+  executeEmergencyWorkflow,
+} from '../utils/emergencyDetection';
 
 interface OverviewProps {
   onNavigateTab?: (tab: string) => void;
@@ -40,7 +46,7 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
   const [checkInResult, setCheckInResult] = useState<any>(null);
   const [medToast, setMedToast] = useState('');
 
-  // Listen for pain reported from any voice or text source (Siri, Voice companion, Orb, Check-in)
+  // Listen for pain reported and body map real-time updates
   useEffect(() => {
     const handlePainEvent = (e: any) => {
       const detail = e.detail;
@@ -56,15 +62,17 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
           [partKey]: {
             ...existing,
             label: detail.label || `${partKey.toUpperCase()} (Pain Reported)`,
-            note: detail.symptom || 'Pain reported just now via voice',
+            note: detail.symptom || 'Pain reported via AI Companion / Check-in',
             color: '#ef4444',
             rec: detail.rec || existing.rec,
             reportedAt: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
             isPainActive: true,
+            painStatus: 'active' as PainStatus,
           },
         };
         try {
           localStorage.setItem('aura_body_observations', JSON.stringify(updated));
+          localStorage.setItem('aura_active_health_issue', partKey);
         } catch {
           // Ignore
         }
@@ -72,52 +80,60 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
       });
 
       setPainAlertToast(
-        `⚡ Body Map Updated: ${detail.label || partKey} marked with pain! (${detail.source || 'Voice'})`
+        `🔴 Body Map Updated: ${detail.label || partKey} marked with red dot! (${detail.source || 'Voice AI'})`
       );
       setTimeout(() => setPainAlertToast(''), 7000);
     };
 
+    const handleBodyMapUpdated = (e: any) => {
+      if (e.detail?.observations) {
+        setBodyObservations(e.detail.observations);
+      } else {
+        try {
+          const saved = localStorage.getItem('aura_body_observations');
+          if (saved) setBodyObservations(JSON.parse(saved));
+        } catch {}
+      }
+
+      if (e.detail?.bodyPart) {
+        setSelectedPart(e.detail.bodyPart);
+      }
+
+      const status = e.detail?.status as PainStatus;
+      const label = e.detail?.label || e.detail?.bodyPart;
+      if (status === 'improving') {
+        setPainAlertToast(`🟢 Body Map: ${label} is improving! Marked with green dot.`);
+      } else if (status === 'resolved') {
+        setPainAlertToast(`⚪ Body Map: ${label} pain completely resolved! Alert dot removed.`);
+      } else if (status === 'active') {
+        setPainAlertToast(`🔴 Body Map: ${label} pain reported! Marked with red dot.`);
+      }
+      setTimeout(() => setPainAlertToast(''), 6000);
+    };
+
     window.addEventListener('aura_pain_reported', handlePainEvent);
-    return () => window.removeEventListener('aura_pain_reported', handlePainEvent);
+    window.addEventListener('aura_body_map_updated', handleBodyMapUpdated);
+    return () => {
+      window.removeEventListener('aura_pain_reported', handlePainEvent);
+      window.removeEventListener('aura_body_map_updated', handleBodyMapUpdated);
+    };
   }, []);
 
+  const handleSetPainStatus = (partKey: BodyPartKey, status: PainStatus, feedback?: string) => {
+    const quote = feedback || (status === 'resolved' ? 'Pain completely resolved' : status === 'improving' ? 'Pain is improving' : 'Active pain reported');
+    syncHealthProgress(partKey, status, quote);
+    try {
+      const saved = localStorage.getItem('aura_body_observations');
+      if (saved) setBodyObservations(JSON.parse(saved));
+    } catch {}
+  };
+
   const handleClearPain = (partKey: BodyPartKey) => {
-    setBodyObservations((prev) => {
-      const original = INITIAL_BODY_OBSERVATIONS[partKey];
-      const updated = {
-        ...prev,
-        [partKey]: {
-          ...original,
-          isPainActive: false,
-        },
-      };
-      try {
-        localStorage.setItem('aura_body_observations', JSON.stringify(updated));
-      } catch {
-        // Ignore
-      }
-      return updated;
-    });
-    setPainAlertToast(`✓ ${partKey} cleared and restored to stable status.`);
-    setTimeout(() => setPainAlertToast(''), 3000);
+    handleSetPainStatus(partKey, 'resolved', 'Pain completely resolved and cleared');
   };
 
   const handleQuickReportPain = (partKey: BodyPartKey, complaintText: string) => {
-    const painCheck = detectPainInText(complaintText);
-    if (painCheck) {
-      window.dispatchEvent(
-        new CustomEvent('aura_pain_reported', {
-          detail: {
-            bodyPart: painCheck.bodyPart,
-            label: painCheck.bodyPartLabel,
-            symptom: painCheck.symptomSummary,
-            rec: painCheck.rec,
-            source: 'Quick Body Map Tap',
-            timestamp: Date.now(),
-          },
-        })
-      );
-    }
+    handleSetPainStatus(partKey, 'active', complaintText);
   };
 
   // Dynamic real-time greeting & current date
@@ -144,21 +160,49 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
     if (!checkInText.trim() || checkInLoading) return;
     setCheckInLoading(true);
 
-    // Auto-check if user wrote about pain in daily check-in
-    const painCheck = detectPainInText(checkInText);
-    if (painCheck) {
+    // Clinical Symptom & Emergency Analysis for Daily Check-In
+    const symptomAnalysis = analyzeHealthSymptoms(checkInText, 'Rajamma');
+    if (symptomAnalysis.hasSymptom) {
+      // Automatic Body Map Dot Updates without manual user entry
+      syncHealthProgress(symptomAnalysis.primaryBodyPart, 'active', checkInText);
+      for (const sec of symptomAnalysis.secondaryBodyParts) {
+        syncHealthProgress(sec, 'active', checkInText);
+      }
+
       window.dispatchEvent(
         new CustomEvent('aura_pain_reported', {
           detail: {
-            bodyPart: painCheck.bodyPart,
-            label: painCheck.bodyPartLabel,
-            symptom: painCheck.symptomSummary,
-            rec: painCheck.rec,
+            bodyPart: symptomAnalysis.primaryBodyPart,
+            label: `${symptomAnalysis.primaryBodyPart.toUpperCase()} (${symptomAnalysis.severity})`,
+            symptom: symptomAnalysis.clinicalSummary,
+            rec: symptomAnalysis.recommendedAction,
             source: 'Daily Check-In',
             timestamp: Date.now(),
           },
         })
       );
+
+      // If condition is SERIOUS or EMERGENCY, trigger automatic Care Circle alert
+      if (symptomAnalysis.isEmergency) {
+        await executeEmergencyWorkflow(symptomAnalysis);
+      }
+    } else {
+      const painCheck = detectPainInText(checkInText);
+      if (painCheck) {
+        syncHealthProgress(painCheck.bodyPart, 'active', checkInText);
+        window.dispatchEvent(
+          new CustomEvent('aura_pain_reported', {
+            detail: {
+              bodyPart: painCheck.bodyPart,
+              label: painCheck.bodyPartLabel,
+              symptom: painCheck.symptomSummary,
+              rec: painCheck.rec,
+              source: 'Daily Check-In',
+              timestamp: Date.now(),
+            },
+          })
+        );
+      }
     }
 
     try {
@@ -501,7 +545,7 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
         </div>
 
         <div style={{ display: 'flex', gap: 10, alignItems: 'stretch' }}>
-          {/* Anatomical SVG Silhouette - Enlarged & Enhanced with all 7 pain hotspots */}
+          {/* Anatomical SVG Silhouette - Dynamic Pain Dots (Red = Active, Green = Improving, No Dot = Resolved) */}
           <div
             style={{
               width: 130,
@@ -535,166 +579,61 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
               {/* Right Leg */}
               <rect x="31.5" y="58" width="10.5" height="44" rx="5" fill="#bfdbfe" />
 
-              {/* 1. Head Hotspot */}
-              {bodyObservations.head?.isPainActive && (
-                <>
-                  <circle cx="30" cy="11.5" r="6.5" fill="none" stroke="#ef4444" strokeWidth="1.2" opacity="0.8" />
-                  <circle cx="30" cy="11.5" r="9" fill="none" stroke="#ef4444" strokeWidth="0.8" opacity="0.4" />
-                </>
-              )}
-              {selectedPart === 'head' && (
-                <circle cx="30" cy="11.5" r="5.8" fill="none" stroke="#10b981" strokeWidth="1.2" opacity="0.75" />
-              )}
-              <circle
-                cx="30"
-                cy="11.5"
-                r="3.6"
-                fill={bodyObservations.head?.isPainActive ? '#ef4444' : selectedPart === 'head' ? '#10b981' : '#34d399'}
-                stroke="white"
-                strokeWidth="1.2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelectedPart('head')}
-              />
-              <circle cx="30" cy="11.5" r="9" fill="transparent" style={{ cursor: 'pointer' }} onClick={() => setSelectedPart('head')} />
+              {/* Dynamic Hotspots: Red Dot = Active | Green Dot = Improving | No Dot = Resolved */}
+              {(
+                [
+                  { key: 'head' as BodyPartKey, coords: [{ cx: 30, cy: 11.5, r: 3.6 }] },
+                  { key: 'shoulder' as BodyPartKey, coords: [{ cx: 11.5, cy: 27, r: 3.2 }, { cx: 48.5, cy: 27, r: 3.2 }] },
+                  { key: 'heart' as BodyPartKey, coords: [{ cx: 26, cy: 33, r: 3.4 }] },
+                  { key: 'back' as BodyPartKey, coords: [{ cx: 34, cy: 38, r: 3.2 }] },
+                  { key: 'stomach' as BodyPartKey, coords: [{ cx: 30, cy: 48, r: 3.4 }] },
+                  { key: 'knee' as BodyPartKey, coords: [{ cx: 23.5, cy: 82, r: 3.4 }, { cx: 36.5, cy: 82, r: 3.4 }] },
+                  { key: 'feet' as BodyPartKey, coords: [{ cx: 23.5, cy: 98, r: 3.0 }, { cx: 36.5, cy: 98, r: 3.0 }] },
+                ]
+              ).map(({ key, coords }) => {
+                const obs = bodyObservations[key];
+                const status: PainStatus = obs?.painStatus || (obs?.isPainActive ? 'active' : 'none');
+                const isSelected = selectedPart === key;
 
-              {/* 2. Shoulder Hotspots */}
-              {bodyObservations.shoulder?.isPainActive && (
-                <>
-                  <circle cx="11.5" cy="27" r="5" fill="none" stroke="#ef4444" strokeWidth="1.2" opacity="0.8" />
-                  <circle cx="48.5" cy="27" r="5" fill="none" stroke="#ef4444" strokeWidth="1.2" opacity="0.8" />
-                </>
-              )}
-              <circle
-                cx="11.5"
-                cy="27"
-                r="3.2"
-                fill={bodyObservations.shoulder?.isPainActive ? '#ef4444' : selectedPart === 'shoulder' ? '#10b981' : '#34d399'}
-                stroke="white"
-                strokeWidth="1.2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelectedPart('shoulder')}
-              />
-              <circle
-                cx="48.5"
-                cy="27"
-                r="3.2"
-                fill={bodyObservations.shoulder?.isPainActive ? '#ef4444' : selectedPart === 'shoulder' ? '#10b981' : '#34d399'}
-                stroke="white"
-                strokeWidth="1.2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelectedPart('shoulder')}
-              />
+                return coords.map(({ cx, cy, r }, idx) => (
+                  <g
+                    key={`${key}-${idx}`}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setSelectedPart(key)}
+                  >
+                    {/* Active Pain = Red Dot with pulsating rings */}
+                    {status === 'active' && (
+                      <>
+                        <circle cx={cx} cy={cy} r={r + 3.4} fill="none" stroke="#ef4444" strokeWidth="1.2" opacity="0.85" />
+                        <circle cx={cx} cy={cy} r={r + 5.6} fill="none" stroke="#ef4444" strokeWidth="0.8" opacity="0.45" />
+                        <circle cx={cx} cy={cy} r={r} fill="#ef4444" stroke="white" strokeWidth="1.2" />
+                      </>
+                    )}
 
-              {/* 3. Heart Hotspot */}
-              {bodyObservations.heart?.isPainActive && (
-                <circle cx="26" cy="33" r="6" fill="none" stroke="#ef4444" strokeWidth="1.4" opacity="0.85" />
-              )}
-              {selectedPart === 'heart' && (
-                <circle cx="26" cy="33" r="5.5" fill="none" stroke="#10b981" strokeWidth="1.2" opacity="0.75" />
-              )}
-              <circle
-                cx="26"
-                cy="33"
-                r="3.4"
-                fill={bodyObservations.heart?.isPainActive ? '#ef4444' : selectedPart === 'heart' ? '#10b981' : '#34d399'}
-                stroke="white"
-                strokeWidth="1.2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelectedPart('heart')}
-              />
-              <circle cx="26" cy="33" r="9" fill="transparent" style={{ cursor: 'pointer' }} onClick={() => setSelectedPart('heart')} />
+                    {/* Improving Pain = Green Dot with soft glow */}
+                    {status === 'improving' && (
+                      <>
+                        <circle cx={cx} cy={cy} r={r + 3.2} fill="none" stroke="#10b981" strokeWidth="1.2" opacity="0.85" />
+                        <circle cx={cx} cy={cy} r={r} fill="#10b981" stroke="white" strokeWidth="1.2" />
+                      </>
+                    )}
 
-              {/* 4. Back / Spine Hotspot */}
-              {bodyObservations.back?.isPainActive && (
-                <circle cx="34" cy="38" r="5.5" fill="none" stroke="#ef4444" strokeWidth="1.2" opacity="0.85" />
-              )}
-              <circle
-                cx="34"
-                cy="38"
-                r="3.2"
-                fill={bodyObservations.back?.isPainActive ? '#ef4444' : selectedPart === 'back' ? '#10b981' : '#64748b'}
-                stroke="white"
-                strokeWidth="1.2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelectedPart('back')}
-              />
-              <circle cx="34" cy="38" r="8" fill="transparent" style={{ cursor: 'pointer' }} onClick={() => setSelectedPart('back')} />
+                    {/* Resolved or None = DOT REMOVED! (Only subtle outline if currently selected) */}
+                    {(status === 'resolved' || status === 'none') && isSelected && (
+                      <circle cx={cx} cy={cy} r={r + 2.5} fill="none" stroke="#3b82f6" strokeWidth="1.2" strokeDasharray="2,2" opacity="0.8" />
+                    )}
 
-              {/* 5. Stomach Hotspot */}
-              {bodyObservations.stomach?.isPainActive && (
-                <circle cx="30" cy="48" r="6" fill="none" stroke="#ef4444" strokeWidth="1.2" opacity="0.85" />
-              )}
-              {selectedPart === 'stomach' && (
-                <circle cx="30" cy="48" r="5.5" fill="none" stroke="#f59e0b" strokeWidth="1.2" opacity="0.75" />
-              )}
-              <circle
-                cx="30"
-                cy="48"
-                r="3.4"
-                fill={bodyObservations.stomach?.isPainActive ? '#ef4444' : selectedPart === 'stomach' ? '#f59e0b' : '#fbbf24'}
-                stroke="white"
-                strokeWidth="1.2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelectedPart('stomach')}
-              />
-              <circle cx="30" cy="48" r="9" fill="transparent" style={{ cursor: 'pointer' }} onClick={() => setSelectedPart('stomach')} />
-
-              {/* 6. Knee Hotspots */}
-              {bodyObservations.knee?.isPainActive && (
-                <>
-                  <circle cx="23.5" cy="82" r="5.5" fill="none" stroke="#ef4444" strokeWidth="1.2" opacity="0.85" />
-                  <circle cx="36.5" cy="82" r="5.5" fill="none" stroke="#ef4444" strokeWidth="1.2" opacity="0.85" />
-                </>
-              )}
-              <circle
-                cx="23.5"
-                cy="82"
-                r="3.4"
-                fill={bodyObservations.knee?.isPainActive ? '#ef4444' : selectedPart === 'knee' ? '#f59e0b' : '#fbbf24'}
-                stroke="white"
-                strokeWidth="1.2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelectedPart('knee')}
-              />
-              <circle
-                cx="36.5"
-                cy="82"
-                r="3.4"
-                fill={bodyObservations.knee?.isPainActive ? '#ef4444' : selectedPart === 'knee' ? '#f59e0b' : '#fbbf24'}
-                stroke="white"
-                strokeWidth="1.2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelectedPart('knee')}
-              />
-
-              {/* 7. Feet Hotspots */}
-              {bodyObservations.feet?.isPainActive && (
-                <>
-                  <circle cx="23.5" cy="98" r="4.8" fill="none" stroke="#ef4444" strokeWidth="1.2" opacity="0.85" />
-                  <circle cx="36.5" cy="98" r="4.8" fill="none" stroke="#ef4444" strokeWidth="1.2" opacity="0.85" />
-                </>
-              )}
-              <circle
-                cx="23.5"
-                cy="98"
-                r="3"
-                fill={bodyObservations.feet?.isPainActive ? '#ef4444' : selectedPart === 'feet' ? '#10b981' : '#34d399'}
-                stroke="white"
-                strokeWidth="1.2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelectedPart('feet')}
-              />
-              <circle
-                cx="36.5"
-                cy="98"
-                r="3"
-                fill={bodyObservations.feet?.isPainActive ? '#ef4444' : selectedPart === 'feet' ? '#10b981' : '#34d399'}
-                stroke="white"
-                strokeWidth="1.2"
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelectedPart('feet')}
-              />
+                    {/* Tap target */}
+                    <circle cx={cx} cy={cy} r={r + 6} fill="transparent" />
+                  </g>
+                ));
+              })}
             </svg>
+
+            {/* Micro Silhouette Label */}
+            <span style={{ fontSize: 8.5, fontWeight: 700, color: '#64748b', marginTop: 2 }}>
+              {selectedPart.toUpperCase()}
+            </span>
           </div>
 
           {/* Observations Selector - Compact Scrollable list of all areas */}
@@ -711,15 +650,19 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
           >
             {(Object.entries(bodyObservations) as [BodyPartKey, BodyPartObservation][]).map(([key, info]) => {
               const isSelected = selectedPart === key;
-              const hasPain = info.isPainActive;
+              const status: PainStatus = info.painStatus || (info.isPainActive ? 'active' : 'none');
+              const isRed = status === 'active';
+              const isGreen = status === 'improving';
+              const isResolved = status === 'resolved' || status === 'none';
+
               return (
                 <div
                   key={key}
                   style={{
                     borderRadius: 10,
                     padding: '6px 8px',
-                    background: hasPain ? '#fef2f2' : isSelected ? `${info.color}14` : '#f9fafb',
-                    border: `1.5px solid ${hasPain ? '#ef4444' : isSelected ? info.color : '#e5e7eb'}`,
+                    background: isRed ? '#fef2f2' : isGreen ? '#f0fdf4' : isSelected ? '#eff6ff' : '#f9fafb',
+                    border: `1.5px solid ${isRed ? '#ef4444' : isGreen ? '#10b981' : isSelected ? '#3b82f6' : '#e5e7eb'}`,
                     transition: 'all 0.18s',
                     fontFamily: "'Nunito', sans-serif",
                   }}
@@ -729,56 +672,90 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
                     style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                      <div
-                        style={{
-                          width: 7,
-                          height: 7,
-                          borderRadius: 3.5,
-                          background: hasPain ? '#ef4444' : info.color,
-                          flexShrink: 0,
-                          boxShadow: hasPain ? '0 0 6px #ef4444' : 'none',
-                        }}
-                      />
+                      {/* Status Dot */}
+                      {isRed && <div style={{ width: 7, height: 7, borderRadius: 3.5, background: '#ef4444', flexShrink: 0, boxShadow: '0 0 6px #ef4444' }} />}
+                      {isGreen && <div style={{ width: 7, height: 7, borderRadius: 3.5, background: '#10b981', flexShrink: 0, boxShadow: '0 0 6px #10b981' }} />}
+                      {isResolved && <div style={{ width: 7, height: 7, borderRadius: 3.5, border: '1px dashed #94a3b8', flexShrink: 0 }} />}
+
                       <span
                         style={{
                           fontSize: 10.5,
                           fontWeight: 800,
-                          color: hasPain ? '#b91c1c' : '#111827',
+                          color: isRed ? '#b91c1c' : isGreen ? '#15803d' : '#111827',
                           lineHeight: 1.2,
                         }}
                       >
-                        {info.label}
+                        {info.label.split(' (')[0]}
+                      </span>
+
+                      {/* Small Status Pill */}
+                      <span
+                        style={{
+                          fontSize: 8,
+                          fontWeight: 700,
+                          padding: '1px 5px',
+                          borderRadius: 4,
+                          background: isRed ? '#fee2e2' : isGreen ? '#dcfce7' : '#f1f5f9',
+                          color: isRed ? '#dc2626' : isGreen ? '#15803d' : '#64748b',
+                        }}
+                      >
+                        {isRed ? 'RED · ACTIVE' : isGreen ? 'GREEN · IMPROVING' : 'CLEAR'}
                       </span>
                     </div>
 
-                    {hasPain && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleClearPain(key);
-                        }}
-                        style={{
-                          background: '#fee2e2',
-                          border: 'none',
-                          color: '#dc2626',
-                          fontSize: 9,
-                          fontWeight: 700,
-                          padding: '2px 5px',
-                          borderRadius: 4,
-                          cursor: 'pointer',
-                        }}
-                        title="Resolve pain and restore to stable"
-                      >
-                        Resolve ✓
-                      </button>
-                    )}
+                    {/* Quick status cycle button */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                      {isRed && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSetPainStatus(key, 'improving', 'Pain improving');
+                          }}
+                          style={{
+                            background: '#dcfce7',
+                            border: 'none',
+                            color: '#15803d',
+                            fontSize: 8.5,
+                            fontWeight: 700,
+                            padding: '2px 5px',
+                            borderRadius: 4,
+                            cursor: 'pointer',
+                          }}
+                          title="Mark pain as improving"
+                        >
+                          🟢 Better
+                        </button>
+                      )}
+                      {!isResolved && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSetPainStatus(key, 'resolved', 'Pain completely gone away');
+                          }}
+                          style={{
+                            background: '#f1f5f9',
+                            border: 'none',
+                            color: '#475569',
+                            fontSize: 8.5,
+                            fontWeight: 700,
+                            padding: '2px 5px',
+                            borderRadius: 4,
+                            cursor: 'pointer',
+                          }}
+                          title="Pain completely gone away (remove dot)"
+                        >
+                          ⚪ Gone ✓
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <p
                     style={{
                       fontSize: 8.5,
-                      color: hasPain ? '#991b1b' : '#6b7280',
+                      color: isRed ? '#991b1b' : isGreen ? '#166534' : '#6b7280',
                       margin: '2px 0 0',
                       paddingLeft: 12,
                       lineHeight: 1.25,
@@ -794,48 +771,136 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
           </div>
         </div>
 
+        {/* Body Map Visual Legend */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-around',
+            marginTop: 10,
+            padding: '6px 10px',
+            background: '#f8fafc',
+            borderRadius: 10,
+            border: '1px solid #e2e8f0',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 4, background: '#ef4444', display: 'inline-block', boxShadow: '0 0 4px #ef4444' }} />
+            <span style={{ fontSize: 9.5, fontWeight: 700, color: '#dc2626' }}>Red Dot: Active Pain</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 4, background: '#10b981', display: 'inline-block', boxShadow: '0 0 4px #10b981' }} />
+            <span style={{ fontSize: 9.5, fontWeight: 700, color: '#059669' }}>Green Dot: Improving</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 4, border: '1.5px dashed #94a3b8', display: 'inline-block' }} />
+            <span style={{ fontSize: 9.5, fontWeight: 700, color: '#64748b' }}>No Dot: Completely Gone</span>
+          </div>
+        </div>
+
         {/* AI Recommendation Box - Dynamically changes based on pain status */}
         <div
           style={{
-            marginTop: 12,
+            marginTop: 10,
             borderRadius: 13,
             padding: '10px 12px',
-            background: currentObs.isPainActive ? '#fff1f2' : '#fffbeb',
-            border: `1.5px solid ${currentObs.isPainActive ? '#fecdd3' : '#fde68a'}`,
+            background:
+              (currentObs.painStatus || (currentObs.isPainActive ? 'active' : 'none')) === 'active'
+                ? '#fff1f2'
+                : (currentObs.painStatus === 'improving')
+                ? '#f0fdf4'
+                : '#f8fafc',
+            border: `1.5px solid ${
+              (currentObs.painStatus || (currentObs.isPainActive ? 'active' : 'none')) === 'active'
+                ? '#fecdd3'
+                : (currentObs.painStatus === 'improving')
+                ? '#bbf7d0'
+                : '#e2e8f0'
+            }`,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
             <p
               style={{
                 fontSize: 11,
                 fontWeight: 800,
-                color: currentObs.isPainActive ? '#e11d48' : '#d97706',
+                color:
+                  (currentObs.painStatus || (currentObs.isPainActive ? 'active' : 'none')) === 'active'
+                    ? '#e11d48'
+                    : (currentObs.painStatus === 'improving')
+                    ? '#15803d'
+                    : '#475569',
                 margin: 0,
               }}
             >
-              {currentObs.isPainActive
+              {(currentObs.painStatus || (currentObs.isPainActive ? 'active' : 'none')) === 'active'
                 ? `🚨 AI Pain Guidance: ${currentObs.label.split(' (')[0]}`
-                : `🤖 AI Wellness Guidance: ${currentObs.label.split(' (')[0]}`}
+                : (currentObs.painStatus === 'improving')
+                ? `🟢 Recovery Progress: ${currentObs.label.split(' (')[0]}`
+                : `⚪ Clear Baseline: ${currentObs.label.split(' (')[0]}`}
             </p>
-            {currentObs.isPainActive && (
-              <span
+
+            {/* Quick Status Toggles for Selected Body Part */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <button
+                type="button"
+                onClick={() => handleSetPainStatus(selectedPart, 'improving', `${selectedPart} pain is improving`)}
                 style={{
+                  background: currentObs.painStatus === 'improving' ? '#10b981' : '#dcfce7',
+                  color: currentObs.painStatus === 'improving' ? 'white' : '#15803d',
+                  border: 'none',
                   fontSize: 9,
-                  fontWeight: 800,
-                  color: '#be123c',
-                  background: '#ffe4e6',
-                  padding: '1px 6px',
+                  fontWeight: 700,
+                  padding: '2px 6px',
                   borderRadius: 6,
+                  cursor: 'pointer',
                 }}
               >
-                ACTION REQUIRED
-              </span>
-            )}
+                🟢 Improving
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetPainStatus(selectedPart, 'resolved', `${selectedPart} pain completely gone away`)}
+                style={{
+                  background: currentObs.painStatus === 'resolved' || !currentObs.painStatus ? '#64748b' : '#f1f5f9',
+                  color: currentObs.painStatus === 'resolved' || !currentObs.painStatus ? 'white' : '#475569',
+                  border: 'none',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                }}
+              >
+                ⚪ Gone (Clear)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetPainStatus(selectedPart, 'active', `${selectedPart} pain active`)}
+                style={{
+                  background: currentObs.painStatus === 'active' || currentObs.isPainActive ? '#ef4444' : '#fee2e2',
+                  color: currentObs.painStatus === 'active' || currentObs.isPainActive ? 'white' : '#dc2626',
+                  border: 'none',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                }}
+              >
+                🔴 Active
+              </button>
+            </div>
           </div>
           <p
             style={{
               fontSize: 11,
-              color: currentObs.isPainActive ? '#9f1239' : '#92400e',
+              color:
+                (currentObs.painStatus || (currentObs.isPainActive ? 'active' : 'none')) === 'active'
+                  ? '#9f1239'
+                  : (currentObs.painStatus === 'improving')
+                  ? '#166534'
+                  : '#475569',
               margin: 0,
               lineHeight: 1.5,
               fontWeight: 500,

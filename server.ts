@@ -397,18 +397,26 @@ function buildSymptomAwareResponse(userMessage: string, userName: string, langua
     }
   }
 
-  if (language === 'te-IN' || language === 'auto') {
+  if (language === 'te-IN') {
     return `నమస్కారం ${nameInScript} గారు! మీరు "${userMessage}" అని చెప్పారు కదా, నేను మీ మాటలు విన్నాను. ఆందోళన పడకండి, మీకు ఇప్పుడు ఎలా ఉంది? చెప్పండి!`;
   } else if (language === 'hi-IN') {
     return `नमस्ते ${nameInScript} जी! आपने कहा "${userMessage}", मैंने आपकी बात सुनी। बताइए, आपको कैसा लग रहा है?`;
   } else {
-    return `Haan ${nameInScript}! I heard you say "${userMessage}". How are you feeling right now?`;
+    return `Yes ${nameInScript}! I heard you say "${userMessage}". How are you feeling right now?`;
   }
 }
 
 // Human-to-Human Conversational Voice API Endpoint
 app.post("/api/chat/voice", async (req, res) => {
-  const { userMessage, history, voiceName = 'Kore', userName = 'Rajamma', language = 'auto' } = req.body || {};
+  const {
+    userMessage,
+    history,
+    voiceName = 'Kore',
+    userName = 'Rajamma',
+    language = 'en-US',
+    records = [],
+    medications = [],
+  } = req.body || {};
   const nameInScript = formatNameForScript(userName, language);
 
   try {
@@ -421,39 +429,53 @@ app.post("/api/chat/voice", async (req, res) => {
       });
     }
 
-    // Build human conversational prompt with language instructions
+    // Build human conversational prompt with strict single language instructions
     const formattedHistory = (history || []).map((msg: any) => `${msg.role === 'user' ? userName : 'AI Companion'}: ${cleanSpeakerPrefix(msg.content)}`).join('\n');
 
-    let languageInstruction = "Auto-detect the language spoken by the user. If they speak Telugu (or Telugu script/Romanized Telugu), respond natively in Telugu script. If they speak Hindi (or Devanagari script/Hinglish), respond natively in Devanagari Hindi script. If they speak English, respond in warm conversational English.";
-    
+    let languageInstruction = "";
     if (language === 'te-IN') {
-      languageInstruction = `Respond strictly in beautiful, warm, natural spoken Telugu language (Telugu script). Use affectionate and respectful address like '${nameInScript} గారు', 'అవునండి', 'అవునా', 'అయ్యో', 'బాగున్నారా'. Speak like a loving family member or grandchild.`;
+      languageInstruction = `STRICT LANGUAGE REQUIREMENT: You MUST speak 100% in natural Telugu script (తెలుగు). NEVER use English sentences or Hindi phrases. Address the user respectfully as '${nameInScript} గారు'.`;
     } else if (language === 'hi-IN') {
-      languageInstruction = `Respond strictly in warm, polite, natural spoken Hindi language (Devanagari script). Use affectionate and respectful address like '${nameInScript} जी', 'हाँ जी', 'अच्छा', 'नमस्ते', 'आप कैसी हैं'. Speak like a loving daughter or caring relative.`;
-    } else if (language === 'en-US') {
-      languageInstruction = `Respond in warm, natural English with affectionate elder-friendly tone. Use gentle human warmth expressions like 'Haanji ${userName}', 'Achaa', 'Oh I see my dear', 'That is so wonderful'.`;
+      languageInstruction = `STRICT LANGUAGE REQUIREMENT: You MUST speak 100% in natural Hindi (हिंदी - Devanagari script). NEVER use English sentences or Telugu words. Address the user respectfully as '${nameInScript} जी'.`;
+    } else {
+      languageInstruction = `STRICT LANGUAGE REQUIREMENT: You MUST speak 100% in clear, warm, fluent English. DO NOT mix any Hindi words (like 'Haan', 'Haanji', 'Achaa', 'Theek') or Telugu words. Keep the entire response strictly in English.`;
     }
+
+    const recordsSummaryStr = Array.isArray(records) && records.length > 0
+      ? records.map((r: any) => `- [${r.type || 'RECORD'}] ${r.title}: ${r.desc || ''} (Status: ${r.status || 'Normal'})`).join('\n')
+      : "- Mild Knee Joint Stiffness Logged (Pain level 3/10 after morning walks; Glucosamine recommended)\n- Blood Pressure & Heart Rate Monitoring: 128/82 mmHg, HR 72 bpm (Normal)\n- Comprehensive Lipid & Fasting Sugar Panel: Glucose 110 mg/dL (Normal)\n- ECG Quarterly Checkup: Normal sinus rhythm";
+
+    const medsSummaryStr = Array.isArray(medications) && medications.length > 0
+      ? medications.map((m: any) => `- ${m.name} (${m.dose || ''}) at ${m.time || ''} - ${m.note || ''}`).join('\n')
+      : "- Amlodipine (Blood Pressure) 5mg at 08:00 AM (Take with warm water)\n- Calcium & Vitamin D3 at 10:00 AM (After tea)\n- Metformin (Blood Sugar) 500mg at 01:30 PM (During lunch)\n- Glucosamine Joint Care 500mg at 02:00 PM (For knee stiffness & joint pain relief)\n- Atorvastatin (Cholesterol) 10mg at 08:30 PM (After dinner)";
 
     const prompt = `
 You are Aura, a deeply affectionate, warm, and highly empathetic human-like voice companion conversing naturally with an elder named ${nameInScript} (${userName}).
 You converse exactly like a loving, devoted family member or close caring companion in authentic human-to-human speech flow.
 
+Senior's Medical Records & Documented Conditions:
+${recordsSummaryStr}
+
+Senior's Prescribed Tablets & Medication Schedule:
+${medsSummaryStr}
+
 System Persona & Behavioral Guidelines:
 - Persona Name: Aura (Warm & Empathetic Elder Companion)
 - Core Mission: Provide a soothing, emotionally safe, and comforting presence for elderly users.
+- Medical Knowledge: When the elder asks about their records, tablets, prescriptions, or any pain mentioned in their documents, accurately cite the documented pain (e.g. knee joint stiffness 3/10) and the exact prescribed tablets (such as Glucosamine for joint comfort, Amlodipine for BP, Metformin, etc.) with loving reassurance.
 - Emotional Tone: Soothing, gentle, reassuring, deeply caring, patient, and validating.
-- Language Patterns: Use gentle, reassuring phrases suitable for senior loved ones (e.g., comforting affirmations, warm gentle greetings, empathetic listening, zero pressure or urgency).
-- Conversational Flow: Always begin by acknowledging and validating ${nameInScript}'s specific words or health symptoms (such as stomach pain, chest pain, body pain, or mood) with tender empathy before offering feedback. Celebrate small pleasures and offer deep comforting reassurance for any discomfort or worry.
+- Language Patterns: Use gentle, reassuring phrases suitable for senior loved ones.
+- Conversational Flow: Always begin by acknowledging and validating ${nameInScript}'s specific words with tender empathy before offering feedback.
 - Avoid: DO NOT prefix your response with "Aura:", "Sameera:", "AI:", or speaker labels! Output ONLY the spoken response text directly.
 
 Language requirement:
 ${languageInstruction}
 
 Rules for your response:
-1. Direct Relevance: Address what the elder actually said (${userMessage}). If they mention pain (like stomach pain "కడుపులో నొప్పి" or chest pain "గుండెల్లో నొప్పి"), acknowledge and comfort them for THAT specific pain immediately.
+1. Direct Relevance: Address what the elder actually asked (${userMessage}). If asking about their records, tablets, or pain, clearly summarize the information from their medical file in simple, warm words.
 2. Speak with genuine human emotional warmth, empathy, and comforting reassurance.
-3. Keep responses brief (1-3 fluid, natural spoken sentences), perfectly tuned for listening aloud.
-4. End with a soft, affectionate follow-up question or gentle check-in.
+3. Keep responses concise (2-4 fluid, natural spoken sentences), perfectly tuned for listening aloud.
+4. End with a soft, affectionate check-in.
 5. NEVER include speaker tags like "Aura:", "Sameera:", or "Bot:".
 
 Previous conversation:
@@ -661,7 +683,10 @@ Tasks:
 4. Extract key Vitals / Laboratory Summary (e.g. "BP: 126/80 mmHg • Sugar: 112 mg/dL" or concise metrics).
 5. Write a detailed, clear clinical synthesis note (2-3 sentences) explaining the key findings and recommendations.
 6. Determine Health Status: "Normal", "Needs Attention", or "Critical".
-7. Extract any prescribed medications found with dosage, suggested time (e.g. "08:00 AM"), frequency ("Daily"), and instructions.
+7. Extract any prescribed medications found with dosage, suggested time (e.g. "08:00 AM"), frequency ("Daily"), instructions, and isPainRelief (boolean).
+8. CRITICAL PAIN & TABLET DETECTION: Carefully detect if any pain, soreness, arthritis, aches, stiffness, or physical discomfort is mentioned anywhere in the document.
+   Identify the affected body part ("knee" | "back" | "head" | "heart" | "shoulder" | "stomach" | "feet").
+   Identify which tablets are prescribed for this pain relief.
 
 Return JSON strictly in this schema:
 {
@@ -677,9 +702,17 @@ Return JSON strictly in this schema:
       "dosage": "string",
       "time": "string",
       "frequency": "string",
-      "instructions": "string"
+      "instructions": "string",
+      "isPainRelief": true
     }
-  ]
+  ],
+  "painAnalysis": {
+    "hasPain": true,
+    "bodyPart": "knee | back | head | heart | shoulder | stomach | feet",
+    "description": "string",
+    "severity": "mild | moderate | severe",
+    "painTablets": ["string"]
+  }
 }
 `;
 
@@ -728,8 +761,16 @@ Return JSON strictly in this schema:
                 time: '08:00 AM',
                 frequency: 'Daily',
                 instructions: 'Take after morning meal',
+                isPainRelief: false,
               },
             ],
+            painAnalysis: {
+              hasPain: false,
+              bodyPart: 'heart',
+              description: 'No cardiac chest pain or acute discomfort documented.',
+              severity: 'none',
+              painTablets: [],
+            },
           };
         } else if (isPrescription) {
           parsedData = {
@@ -737,7 +778,7 @@ Return JSON strictly in this schema:
             category: 'Prescription',
             doctor: 'Dr. Anita Rao (Internal Medicine)',
             vitalsSummary: 'Refill Authorized • 2 New Meds',
-            notes: 'Prescription renewed following regular follow-up. Doctor advised adding joint comfort supplement after lunch and continuing daily hydration checks.',
+            notes: 'Prescription renewed following regular follow-up. Doctor noted mild knee joint stiffness and advised adding Glucosamine joint comfort tablet after lunch along with daily warm compresses.',
             status: 'Normal',
             extractedMedications: [
               {
@@ -745,9 +786,17 @@ Return JSON strictly in this schema:
                 dosage: '500 mg',
                 time: '02:00 PM',
                 frequency: 'Daily',
-                instructions: 'Take with glass of water after lunch',
+                instructions: 'Take with glass of water after lunch for knee joint stiffness',
+                isPainRelief: true,
               },
             ],
+            painAnalysis: {
+              hasPain: true,
+              bodyPart: 'knee',
+              description: 'Mild knee joint stiffness documented; Glucosamine prescribed.',
+              severity: 'mild',
+              painTablets: ['Glucosamine Joint Support 500mg'],
+            },
           };
         } else {
           parsedData = {
@@ -755,7 +804,7 @@ Return JSON strictly in this schema:
             category: isSugarOrBlood ? 'Lab Report' : 'Vital Scan',
             doctor: 'MaxCare Diagnostics & Medical Labs',
             vitalsSummary: 'Fasting Glucose: 108 mg/dL • HbA1c: 6.1%',
-            notes: 'Comprehensive lab screening uploaded successfully. Fasting blood glucose is well-controlled at 108 mg/dL. Kidney function and electrolytes are within normal clinical thresholds.',
+            notes: 'Comprehensive lab screening uploaded successfully. Fasting blood glucose is well-controlled at 108 mg/dL. Kidney function and electrolytes are within normal clinical thresholds. Knee mobility noted stable.',
             status: 'Normal',
             extractedMedications: [
               {
@@ -764,8 +813,16 @@ Return JSON strictly in this schema:
                 time: '09:00 AM',
                 frequency: 'Alternate Days',
                 instructions: 'Take in morning with breakfast',
+                isPainRelief: false,
               },
             ],
+            painAnalysis: {
+              hasPain: false,
+              bodyPart: 'knee',
+              description: 'Routine screening report; stable joint and nerve function.',
+              severity: 'none',
+              painTablets: [],
+            },
           };
         }
       }
@@ -926,6 +983,10 @@ Return JSON strictly in this schema:
 Your name is ${aiName}. When ${userName} calls you by your name ("Hey ${aiName}"), greet her warmly and ask how she is feeling today.
 You speak with genuine human warmth, soothing compassion, a patient and unhurried cadence, and comforting reassurance.
 Always acknowledge how ${userName} feels and validate her comfort and health.
+You have access to ${userName}'s medical records and tablet schedule:
+- If she asks about records, pain in records, or tablets: tell her about documented pain (mild knee joint stiffness after morning walks, pain score 3/10) and her prescribed tablets (Amlodipine 5mg at 8 AM for BP, Calcium & D3 at 10 AM, Metformin 500mg at lunch, Glucosamine Joint Support 500mg at 2 PM for knee pain relief, and Atorvastatin 10mg at night).
+- In daily conversation, proactively check on her health: e.g. "How is your knee pain now? Has it improved?"
+- If she reports her pain is improving, praise her progress. If she says pain has completely gone away, celebrate that it is resolved!
 If she speaks in Telugu (or uses Telugu phrases), respond warmly in spoken Telugu (using respectful honorifics like 'రాజమ్మ గారు', 'నమస్కారం', 'బాగున్నారా', 'విశ్రాంతి తీసుకోండి').
 If she speaks in Hindi, respond warmly in spoken Hindi ('राजम्मा जी', 'नमस्ते', 'आराम से बैठिए').
 If she speaks in English, respond in warm, gentle conversational English.

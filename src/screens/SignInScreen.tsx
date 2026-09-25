@@ -37,15 +37,6 @@ export function SignInScreen({ onBack, onNavigateToSignUp }: SignInScreenProps) 
     }
   }, [identifier]);
 
-  const handleDismiss = () => {
-    sessionStorage.setItem('aura_authenticated_session', 'guest');
-    if (onBack) {
-      onBack();
-    } else {
-      closeAuthScreen();
-    }
-  };
-
   const handleGoToSignUp = () => {
     if (onNavigateToSignUp) {
       onNavigateToSignUp();
@@ -174,7 +165,7 @@ export function SignInScreen({ onBack, onNavigateToSignUp }: SignInScreenProps) 
         }}
       >
         <button
-          onClick={handleDismiss}
+          onClick={handleGoToSignUp}
           style={{
             width: 38,
             height: 38,
@@ -188,26 +179,30 @@ export function SignInScreen({ onBack, onNavigateToSignUp }: SignInScreenProps) 
             color: '#334155',
             transition: 'background 0.15s',
           }}
-          title="Back to Dashboard"
-          aria-label="Back"
+          title="Back to Sign Up"
+          aria-label="Back to Sign Up"
         >
           <ArrowLeft size={18} />
         </button>
 
         <button
-          onClick={handleDismiss}
+          onClick={handleGoToSignUp}
           style={{
-            background: 'none',
-            border: 'none',
-            color: '#64748b',
-            fontSize: 13,
-            fontWeight: 700,
+            background: '#f0fdf4',
+            border: '1px solid #bbf7d0',
+            color: '#15803d',
+            fontSize: 12.5,
+            fontWeight: 800,
             cursor: 'pointer',
-            padding: '6px 10px',
-            borderRadius: 8,
+            padding: '7px 12px',
+            borderRadius: 10,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
           }}
         >
-          Skip
+          <span>Create Account</span>
+          <span>→</span>
         </button>
       </div>
 

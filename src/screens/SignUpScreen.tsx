@@ -25,15 +25,6 @@ export function SignUpScreen({ onBack, onNavigateToSignIn }: SignUpScreenProps) 
   const [errorMsg, setErrorMsg] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleDismiss = () => {
-    sessionStorage.setItem('aura_authenticated_session', 'guest');
-    if (onBack) {
-      onBack();
-    } else {
-      closeAuthScreen();
-    }
-  };
-
   const handleGoToSignIn = () => {
     if (onNavigateToSignIn) {
       onNavigateToSignIn();
@@ -140,41 +131,30 @@ export function SignUpScreen({ onBack, onNavigateToSignIn }: SignUpScreenProps) 
           flexShrink: 0,
         }}
       >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: '#059669', letterSpacing: '-0.01em' }}>
+            Aura Companion
+          </span>
+        </div>
+
         <button
           onClick={handleGoToSignIn}
           style={{
-            width: 38,
-            height: 38,
-            borderRadius: 12,
-            background: '#f8fafc',
-            border: '1px solid #e2e8f0',
+            background: '#f0fdf4',
+            border: '1px solid #bbf7d0',
+            color: '#15803d',
+            fontSize: 12.5,
+            fontWeight: 800,
+            cursor: 'pointer',
+            padding: '7px 12px',
+            borderRadius: 10,
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            color: '#334155',
-            transition: 'background 0.15s',
-          }}
-          title="Back to Sign In"
-          aria-label="Back to Sign In"
-        >
-          <ArrowLeft size={18} />
-        </button>
-
-        <button
-          onClick={handleDismiss}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: '#64748b',
-            fontSize: 13,
-            fontWeight: 700,
-            cursor: 'pointer',
-            padding: '6px 10px',
-            borderRadius: 8,
+            gap: 4,
           }}
         >
-          Skip
+          <span>Sign In</span>
+          <span>→</span>
         </button>
       </div>
 

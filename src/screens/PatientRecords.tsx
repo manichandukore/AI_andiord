@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { syncHealthProgress, BodyPartKey } from '../utils/painDetection';
 
-interface Medication {
+export interface Medication {
   time: string;
   freq: string;
   name: string;
   dose: string;
   note: string;
   active?: boolean;
+  isPainRelief?: boolean;
 }
 
-interface MedicalRecord {
+export interface MedicalRecord {
   type: string;
   date: string;
   by: string;
@@ -20,9 +22,13 @@ interface MedicalRecord {
   statusOk: boolean;
   icon: string;
   filterKey: string;
+  hasPain?: boolean;
+  painLocation?: string;
+  painSeverity?: string;
+  painReliefNote?: string;
 }
 
-const MEDICATIONS: Medication[] = [
+export const DEFAULT_MEDICATIONS: Medication[] = [
   {
     time: '08:00 AM',
     freq: 'DAILY',
@@ -30,6 +36,16 @@ const MEDICATIONS: Medication[] = [
     dose: '5 mg',
     note: 'With warm water after breakfast',
     active: true,
+    isPainRelief: false,
+  },
+  {
+    time: '10:00 AM',
+    freq: 'ALT',
+    name: 'Calcium & Vitamin D3',
+    dose: '1 Tablet',
+    note: 'After morning tea for bone strength',
+    active: true,
+    isPainRelief: false,
   },
   {
     time: '01:30 PM',
@@ -38,6 +54,16 @@ const MEDICATIONS: Medication[] = [
     dose: '500 mg',
     note: 'During lunch',
     active: true,
+    isPainRelief: false,
+  },
+  {
+    time: '02:00 PM',
+    freq: 'DAILY',
+    name: 'Glucosamine Joint Support',
+    dose: '500 mg',
+    note: 'After lunch for knee joint & pain comfort',
+    active: true,
+    isPainRelief: true,
   },
   {
     time: '08:30 PM',
@@ -46,18 +72,11 @@ const MEDICATIONS: Medication[] = [
     dose: '10 mg',
     note: 'After dinner before sleep',
     active: true,
-  },
-  {
-    time: '10:00 AM',
-    freq: 'ALT',
-    name: 'Calcium & Vitamin D3',
-    dose: '1 Tablet',
-    note: 'After morning tea',
-    active: true,
+    isPainRelief: false,
   },
 ];
 
-const RECORDS: MedicalRecord[] = [
+export const DEFAULT_RECORDS: MedicalRecord[] = [
   {
     type: 'VITAL SCAN',
     date: '2026-08-05',
@@ -69,6 +88,7 @@ const RECORDS: MedicalRecord[] = [
     statusOk: true,
     icon: '📊',
     filterKey: 'Vital Scan',
+    hasPain: false,
   },
   {
     type: 'LAB REPORT',
@@ -81,18 +101,23 @@ const RECORDS: MedicalRecord[] = [
     statusOk: true,
     icon: '🧪',
     filterKey: 'Lab Report',
+    hasPain: false,
   },
   {
     type: 'SYMPTOM LOG',
     date: '2026-07-15',
-    by: 'Self Log / Voice AI',
+    by: 'Dr. K.S. Sharma',
     title: 'Mild Knee Joint Stiffness Logged',
-    desc: 'Stiffness after morning walk. Warm compress recommended.',
+    desc: 'Stiffness after morning walk. Recommended Glucosamine joint tablet after lunch & warm compress.',
     metric: 'Pain level: 3/10',
     status: 'Needs Attention',
     statusOk: false,
     icon: '⚠️',
     filterKey: 'Symptom Log',
+    hasPain: true,
+    painLocation: 'knee',
+    painSeverity: 'mild',
+    painReliefNote: 'Glucosamine 500mg daily & warm compresses',
   },
   {
     type: 'DOCTOR VISIT',
@@ -105,6 +130,7 @@ const RECORDS: MedicalRecord[] = [
     statusOk: true,
     icon: '👨‍⚕️',
     filterKey: 'Doctor Visit',
+    hasPain: false,
   },
 ];
 
@@ -113,13 +139,43 @@ const TYPE_STYLES: Record<string, { bg: string; text: string }> = {
   'VITAL SCAN': { bg: '#e0f2fe', text: '#0369a1' },
   'SYMPTOM LOG': { bg: '#fef3c7', text: '#d97706' },
   'DOCTOR VISIT': { bg: '#f0fdf4', text: '#059669' },
+  'PRESCRIPTION': { bg: '#dcfce7', text: '#15803d' },
 };
 
 export function PatientRecords() {
   const [activeFilter, setActiveFilter] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
-  const [records, setRecords] = useState<MedicalRecord[]>(RECORDS);
-  const [medications, setMedications] = useState<Medication[]>(MEDICATIONS);
+
+  // Persist records & medications in localStorage so Siri & other tabs can read them
+  const [records, setRecords] = useState<MedicalRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem('aura_patient_records');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_RECORDS;
+  });
+
+  const [medications, setMedications] = useState<Medication[]>(() => {
+    try {
+      const saved = localStorage.getItem('aura_medications');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_MEDICATIONS;
+  });
+
+  // Sync to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('aura_patient_records', JSON.stringify(records));
+    } catch {}
+  }, [records]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('aura_medications', JSON.stringify(medications));
+    } catch {}
+  }, [medications]);
+
   const [isUploading, setIsUploading] = useState(false);
 
   // In-app modals state
@@ -152,6 +208,15 @@ export function PatientRecords() {
 
   const handleSaveMedication = () => {
     if (!medName.trim()) return;
+    const isPain =
+      medName.toLowerCase().includes('glucosamine') ||
+      medName.toLowerCase().includes('pain') ||
+      medName.toLowerCase().includes('paracetamol') ||
+      medName.toLowerCase().includes('dolo') ||
+      medName.toLowerCase().includes('joint') ||
+      medNote.toLowerCase().includes('pain') ||
+      medNote.toLowerCase().includes('stiff');
+
     setMedications((prev) => [
       ...prev,
       {
@@ -161,6 +226,7 @@ export function PatientRecords() {
         dose: medDose || '1 dose',
         note: medNote || 'Take with water',
         active: true,
+        isPainRelief: isPain,
       },
     ]);
     setShowAddMed(false);
@@ -175,7 +241,16 @@ export function PatientRecords() {
       'VITAL SCAN': '📊',
       'SYMPTOM LOG': '📝',
       'DOCTOR VISIT': '🩺',
+      'PRESCRIPTION': '💊',
     };
+
+    const hasPain =
+      recTitle.toLowerCase().includes('pain') ||
+      recTitle.toLowerCase().includes('stiff') ||
+      recTitle.toLowerCase().includes('knee') ||
+      recDesc.toLowerCase().includes('pain') ||
+      recDesc.toLowerCase().includes('stiff');
+
     setRecords((prev) => [
       {
         type: typeUpper,
@@ -184,10 +259,13 @@ export function PatientRecords() {
         title: recTitle.trim(),
         desc: recDesc || 'Direct health record logged.',
         metric: recMetric || 'Normal status',
-        status: 'Normal',
-        statusOk: true,
+        status: hasPain ? 'Needs Attention' : 'Normal',
+        statusOk: !hasPain,
         icon: icons[typeUpper] || '📋',
         filterKey: recCategory,
+        hasPain,
+        painLocation: hasPain ? 'knee' : undefined,
+        painReliefNote: hasPain ? 'Warm compress & rest' : undefined,
       },
       ...prev,
     ]);
@@ -217,21 +295,50 @@ export function PatientRecords() {
         const data = await res.json();
         if (data.success && data.analysis) {
           const analysis = data.analysis;
-          setRecords((prev) => [
-            {
-              type: (analysis.category || 'LAB REPORT').toUpperCase(),
-              date: new Date().toISOString().split('T')[0],
-              by: analysis.doctor || 'AI Medical Extraction',
-              title: analysis.title || file.name,
-              desc: analysis.notes || 'Analyzed via Gemini Medical Document Vision.',
-              metric: analysis.vitalsSummary || 'Extracted via AI',
-              status: analysis.status || 'Normal',
-              statusOk: analysis.status !== 'Attention Needed',
-              icon: '📄',
-              filterKey: analysis.category || 'Lab Report',
-            },
-            ...prev,
-          ]);
+          const painInfo = analysis.painAnalysis;
+          const hasPainDoc = !!painInfo?.hasPain;
+          const painLocation = painInfo?.bodyPart || 'knee';
+
+          const newRecord: MedicalRecord = {
+            type: (analysis.category || 'LAB REPORT').toUpperCase(),
+            date: new Date().toISOString().split('T')[0],
+            by: analysis.doctor || 'AI Medical Extraction',
+            title: analysis.title || file.name,
+            desc: analysis.notes || 'Analyzed via Gemini Medical Document Vision.',
+            metric: analysis.vitalsSummary || 'Extracted via AI',
+            status: analysis.status || (hasPainDoc ? 'Needs Attention' : 'Normal'),
+            statusOk: analysis.status !== 'Needs Attention' && !hasPainDoc,
+            icon: hasPainDoc ? '🩹' : '📄',
+            filterKey: analysis.category || 'Lab Report',
+            hasPain: hasPainDoc,
+            painLocation: hasPainDoc ? painLocation : undefined,
+            painSeverity: painInfo?.severity,
+            painReliefNote: painInfo?.painTablets?.join(', ') || undefined,
+          };
+
+          setRecords((prev) => [newRecord, ...prev]);
+
+          // If pain is documented in the uploaded record, immediately sync with Body Map & Siri
+          if (hasPainDoc) {
+            syncHealthProgress(
+              painLocation as BodyPartKey,
+              'active',
+              painInfo?.description || 'Pain documented in medical report'
+            );
+
+            window.dispatchEvent(
+              new CustomEvent('aura_pain_reported', {
+                detail: {
+                  bodyPart: painLocation,
+                  label: `${painLocation.toUpperCase()} (Documented in Medical Record)`,
+                  symptom: painInfo?.description || 'Pain documented in medical report',
+                  rec: `Prescribed relief: ${painInfo?.painTablets?.join(', ') || 'Medication on file'}. ${analysis.notes || ''}`,
+                  source: `Uploaded Record (${analysis.title || file.name})`,
+                  timestamp: Date.now(),
+                },
+              })
+            );
+          }
 
           if (analysis.extractedMedications && analysis.extractedMedications.length > 0) {
             setMedications((prev) => [
@@ -243,10 +350,23 @@ export function PatientRecords() {
                 dose: m.dosage || '1 dose',
                 note: m.instructions || 'Extracted prescription',
                 active: true,
+                isPainRelief:
+                  m.isPainRelief ||
+                  m.name.toLowerCase().includes('glucosamine') ||
+                  m.name.toLowerCase().includes('pain') ||
+                  m.name.toLowerCase().includes('dolo') ||
+                  m.name.toLowerCase().includes('paracetamol'),
               })),
             ]);
           }
-          setUploadNotice(`Medical document analyzed successfully: ${analysis.title || file.name}`);
+
+          if (hasPainDoc) {
+            setUploadNotice(
+              `⚡ Document Analyzed: Found documented ${painLocation.toUpperCase()} pain. Prescribed tablets (${(painInfo?.painTablets || []).join(', ') || 'Glucosamine'}) added and Body Map updated!`
+            );
+          } else {
+            setUploadNotice(`Medical document analyzed successfully: ${analysis.title || file.name}`);
+          }
         } else {
           setUploadNotice(`Document parsed and added to medical history: ${file.name}`);
         }
@@ -286,6 +406,30 @@ export function PatientRecords() {
         </p>
       </div>
 
+      {/* Siri Voice Assistant Helper Banner */}
+      <div
+        style={{
+          margin: '0 12px 10px',
+          borderRadius: 16,
+          padding: '10px 14px',
+          background: 'linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%)',
+          border: '1.5px solid #bfdbfe',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+        }}
+      >
+        <span style={{ fontSize: 22 }}>🎙️</span>
+        <div style={{ flex: 1 }}>
+          <p style={{ margin: 0, fontSize: 11, fontWeight: 800, color: '#1e40af' }}>
+            Siri Medical Records & Tablets Assistant
+          </p>
+          <p style={{ margin: '2px 0 0', fontSize: 10, color: '#3b82f6', lineHeight: 1.4 }}>
+            Say &ldquo;Siri, is there any pain in my records?&rdquo; or &ldquo;Siri, what tablets do I take?&rdquo; to hear your medical reports and prescribed medicines aloud.
+          </p>
+        </div>
+      </div>
+
       {/* Medication Schedule Section */}
       <div style={{ margin: '0 12px 10px', borderRadius: 20, padding: '14px 16px', background: 'white' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -320,15 +464,15 @@ export function PatientRecords() {
               style={{
                 borderRadius: 12,
                 padding: '10px 12px',
-                background: '#f9fafb',
-                border: '1px solid #e9ecef',
+                background: med.isPainRelief ? '#fff5f5' : '#f9fafb',
+                border: `1px solid ${med.isPainRelief ? '#fecaca' : '#e9ecef'}`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
               }}
             >
               <div style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 3 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, color: '#059669' }}>
                     ⏰ {med.time}
                   </span>
@@ -344,6 +488,20 @@ export function PatientRecords() {
                   >
                     {med.freq}
                   </span>
+                  {med.isPainRelief && (
+                    <span
+                      style={{
+                        padding: '1px 6px',
+                        borderRadius: 6,
+                        background: '#fee2e2',
+                        color: '#b91c1c',
+                        fontSize: 9,
+                        fontWeight: 700,
+                      }}
+                    >
+                      🩹 Pain Relief Tablet
+                    </span>
+                  )}
                 </div>
                 <p style={{ fontSize: 12, fontWeight: 700, color: '#111827', margin: 0 }}>
                   {med.name}
@@ -591,6 +749,27 @@ export function PatientRecords() {
                       <p style={{ fontSize: 10, color: '#6b7280', margin: '2px 0 6px' }}>
                         {rec.desc}
                       </p>
+                      {rec.hasPain && (
+                        <div style={{ margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <span
+                            style={{
+                              padding: '2px 7px',
+                              borderRadius: 6,
+                              background: '#fee2e2',
+                              color: '#b91c1c',
+                              fontSize: 9,
+                              fontWeight: 800,
+                            }}
+                          >
+                            🚨 Documented Pain: {rec.painLocation ? rec.painLocation.toUpperCase() : 'KNEE'}
+                          </span>
+                          {rec.painReliefNote && (
+                            <span style={{ fontSize: 9.5, color: '#991b1b', fontWeight: 600 }}>
+                              Relief: {rec.painReliefNote}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <span style={{ fontSize: 10, fontWeight: 600, color: '#374151' }}>
                           {rec.metric}

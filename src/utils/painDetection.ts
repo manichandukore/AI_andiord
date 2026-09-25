@@ -1,6 +1,8 @@
 // Clinical pain detection and body map update utility
 export type BodyPartKey = 'head' | 'shoulder' | 'heart' | 'back' | 'stomach' | 'knee' | 'feet';
 
+export type PainStatus = 'active' | 'improving' | 'resolved' | 'none';
+
 export interface BodyPartObservation {
   label: string;
   note: string;
@@ -8,6 +10,11 @@ export interface BodyPartObservation {
   rec: string;
   reportedAt?: string;
   isPainActive?: boolean;
+  painStatus?: PainStatus; // 'active' (red dot) | 'improving' (green dot) | 'resolved' (no dot) | 'none'
+  condition?: string;
+  source?: string;
+  lastPatientFeedback?: string;
+  reliefTablets?: string[];
 }
 
 export const INITIAL_BODY_OBSERVATIONS: Record<BodyPartKey, BodyPartObservation> = {
@@ -16,42 +23,58 @@ export const INITIAL_BODY_OBSERVATIONS: Record<BodyPartKey, BodyPartObservation>
     note: 'Excellent mental clarity baseline',
     color: '#10b981',
     rec: 'Mental clarity is at an excellent baseline. Continue daily morning mindfulness and regular sleep schedule.',
+    painStatus: 'none',
+    isPainActive: false,
   },
   shoulder: {
     label: 'Shoulder & Arms (Comfortable)',
     note: 'Good range of motion, no stiffness reported',
     color: '#10b981',
     rec: 'Joint flexibility is stable. Gentle arm raises during morning routine help maintain mobility.',
+    painStatus: 'none',
+    isPainActive: false,
   },
   heart: {
-    label: 'Heart & Chest (Stable)',
-    note: 'Resting pulse 72 bpm, normal sinus rhythm',
+    label: 'Heart & Chest (Cardiovascular Care)',
+    note: 'Resting pulse 72 bpm, blood pressure monitoring',
     color: '#10b981',
-    rec: 'Cardiac vitals are completely stable. Continue daily afternoon quiet rest and low-sodium nutrition.',
+    rec: 'Continue prescribed cardiac medications and low-sodium nutrition. Rest quietly if exertional discomfort occurs.',
+    painStatus: 'none',
+    isPainActive: false,
   },
   back: {
     label: 'Back & Spine (Aligned)',
     note: 'Posture stable with good lumbar support',
     color: '#10b981',
     rec: 'Maintain supportive sitting posture. Gentle pelvic tilts and short walks relieve lower spine pressure.',
+    painStatus: 'none',
+    isPainActive: false,
   },
   stomach: {
     label: 'Stomach (Digestive Care)',
-    note: 'Mild fullness after morning breakfast',
-    color: '#f59e0b',
+    note: 'Digestion stable, hydrate with warm water',
+    color: '#10b981',
     rec: 'Hydrate with warm ginger or cumin water after meals. Avoid heavy or oily dinners.',
+    painStatus: 'none',
+    isPainActive: false,
   },
   knee: {
-    label: 'Knee & Legs (Observation)',
+    label: 'Knee & Legs (Joint Care)',
     note: 'Mild physical fatigue during morning walk',
-    color: '#f59e0b',
-    rec: 'Mild knee stiffness reported earlier. Recommended light range-of-motion stretching and warm compresses.',
+    color: '#ef4444',
+    rec: 'Knee stiffness documented. Recommended Glucosamine joint tablet after lunch & warm compresses.',
+    painStatus: 'active',
+    isPainActive: true,
+    condition: 'Mild Knee Joint Stiffness',
+    reliefTablets: ['Glucosamine Joint Support 500mg'],
   },
   feet: {
     label: 'Feet & Ankles (Healthy Circulation)',
     note: 'Normal peripheral temperature, no edema',
     color: '#10b981',
     rec: 'Circulation in lower extremities is healthy. Keep feet warm and wear non-skid supportive slippers.',
+    painStatus: 'none',
+    isPainActive: false,
   },
 };
 
@@ -116,23 +139,50 @@ export const CLINICAL_PAIN_GUIDELINES: Record<
   },
 };
 
-export function detectPainInText(text: string): {
+export interface PainDetectionResult {
   hasPain: boolean;
   bodyPart: BodyPartKey;
+  secondaryParts?: BodyPartKey[];
   bodyPartLabel: string;
   symptomSummary: string;
   rec: string;
+  severity: 'NORMAL' | 'MILD' | 'MODERATE' | 'SERIOUS' | 'EMERGENCY';
+  isEmergency: boolean;
+  symptomName: string;
   spokenReply: {
     english: string;
     telugu: string;
     hindi: string;
   };
-} | null {
+}
+
+export function detectPainInText(text: string): PainDetectionResult | null {
   if (!text || typeof text !== 'string') return null;
   const lower = text.toLowerCase().trim();
 
-  // Words indicating pain, ache, stiffness, discomfort
-  const painKeywords = [
+  // Emergency / Severe indicators
+  const isSevere =
+    lower.includes('severe') ||
+    lower.includes('very bad') ||
+    lower.includes('very severe') ||
+    lower.includes('hurting very badly') ||
+    lower.includes('hurts very badly') ||
+    lower.includes('cannot bear') ||
+    lower.includes('unbearable') ||
+    lower.includes('spinning badly') ||
+    lower.includes('cannot breathe') ||
+    lower.includes('faint') ||
+    lower.includes('fainting') ||
+    lower.includes('crushing') ||
+    lower.includes('acute') ||
+    lower.includes('తీవ్రమైన') ||
+    lower.includes('చాలా ఎక్కువ') ||
+    lower.includes('భరించలేను') ||
+    lower.includes('बहुत तेज') ||
+    lower.includes('असहनीय');
+
+  // Words indicating pain, ache, stiffness, discomfort, or health problem
+  const generalSymptomKeywords = [
     'pain',
     'paining',
     'hurts',
@@ -152,6 +202,20 @@ export function detectPainInText(text: string): {
     'swollen',
     'heavy',
     'sprain',
+    'dizzy',
+    'dizziness',
+    'spinning',
+    'vertigo',
+    'faint',
+    'fainting',
+    'weakness',
+    'weak',
+    'breath',
+    'breathing',
+    'breathless',
+    'shortness of breath',
+    'nausea',
+    'vomiting',
     'నొప్పి',
     'నొప్పులు',
     'బాధ',
@@ -159,6 +223,10 @@ export function detectPainInText(text: string): {
     'లాగుతుంది',
     'పట్టేసింది',
     'మంట',
+    'తిరుగుతుంది',
+    'మైకం',
+    'నీరసం',
+    'శ్వాస',
     'दर्द',
     'तकलीफ',
     'पीड़ा',
@@ -167,32 +235,116 @@ export function detectPainInText(text: string): {
     'ऐंठन',
     'सूजन',
     'जकड़न',
+    'चक्कर',
+    'कमजोरी',
+    'सांस',
   ];
 
-  const hasPainKeyword = painKeywords.some((w) => lower.includes(w));
+  const hasGeneralKeyword = generalSymptomKeywords.some((w) => lower.includes(w));
 
-  // Body part mapping keywords
+  // Specific body part keywords
   const bodyPartKeywords: Record<BodyPartKey, string[]> = {
     head: [
       'head',
       'headache',
+      'head ache',
       'migraine',
       'temple',
       'forehead',
       'scalp',
       'dizzy',
       'dizziness',
+      'spinning',
+      'vertigo',
+      'lightheaded',
+      'faint',
+      'fainting',
+      'confusion',
+      'weakness',
+      'feeling weak',
+      'stroke',
       'తల',
       'తలనొప్పి',
+      'తల నొప్పి',
       'కళ్ళు తిరగడం',
+      'మైకం',
+      'నీరసం',
+      'స్పృహ',
       'सिर',
       'सिरदर्द',
+      'सिर दर्द',
       'माथा',
       'चक्कर',
+      'बेहोश',
+      'कमजोरी',
+    ],
+    heart: [
+      'heart',
+      'chest',
+      'ribs',
+      'breath',
+      'breathing',
+      'breathing difficulty',
+      'difficulty breathing',
+      'short of breath',
+      'shortness of breath',
+      'breathless',
+      'cannot breathe',
+      'palpitation',
+      'racing heart',
+      'angina',
+      'tightness in chest',
+      'pressure in chest',
+      'crushing chest',
+      'గుండె',
+      'ఛాతీ',
+      'రొమ్ము',
+      'దడ',
+      'శ్వాస',
+      'శ్వాస ఆడట్లేదు',
+      'ఆయాసం',
+      'छाती',
+      'दिल',
+      'सीने',
+      'धड़कन',
+      'सांस',
+      'सांस फूलना',
+    ],
+    stomach: [
+      'stomach',
+      'stomachache',
+      'stomach pain',
+      'belly',
+      'belly pain',
+      'tummy',
+      'abdomen',
+      'abdominal',
+      'gut',
+      'gastric',
+      'digest',
+      'indigestion',
+      'acid',
+      'cramp',
+      'cramps',
+      'nausea',
+      'vomiting',
+      'కడుపు',
+      'పొట్ట',
+      'కడుపు నొప్పి',
+      'పొట్ట నొప్పి',
+      'అజీర్ణం',
+      'వాంతులు',
+      'గ్యాస్',
+      'पेट',
+      'पेट दर्द',
+      'उदर',
+      'मरोड़',
+      'उल्टी',
     ],
     shoulder: [
       'shoulder',
       'arm',
+      'left arm',
       'elbow',
       'wrist',
       'hand',
@@ -209,24 +361,6 @@ export function detectPainInText(text: string): {
       'कलाई',
       'कोहनी',
     ],
-    heart: [
-      'heart',
-      'chest',
-      'ribs',
-      'breath',
-      'breathing',
-      'palpitation',
-      'గుండె',
-      'ఛాతీ',
-      'రొమ్ము',
-      'దడ',
-      'శ్వాస',
-      'छाती',
-      'दिल',
-      'सीने',
-      'धड़कन',
-      'सांस',
-    ],
     back: [
       'back',
       'spine',
@@ -241,24 +375,6 @@ export function detectPainInText(text: string): {
       'पीठ',
       'कमर',
       'रीढ़',
-    ],
-    stomach: [
-      'stomach',
-      'belly',
-      'tummy',
-      'abdomen',
-      'gut',
-      'gastric',
-      'digest',
-      'indigestion',
-      'acid',
-      'కడుపు',
-      'పొట్ట',
-      'అజీర్ణం',
-      'गैस',
-      'पेट',
-      'उदर',
-      'मरोड़',
     ],
     knee: [
       'knee',
@@ -302,8 +418,235 @@ export function detectPainInText(text: string): {
     ],
   };
 
-  let matchedPart: BodyPartKey | null = null;
+  const matchedParts: BodyPartKey[] = [];
 
+  for (const [part, keywords] of Object.entries(bodyPartKeywords) as [BodyPartKey, string[]][]) {
+    if (keywords.some((k) => lower.includes(k))) {
+      matchedParts.push(part);
+    }
+  }
+
+  // If general symptom keyword is present but no specific body part matched, guess from activity or knee
+  if (hasGeneralKeyword && matchedParts.length === 0) {
+    if (lower.includes('walk') || lower.includes('stand') || lower.includes('step')) {
+      matchedParts.push('knee');
+    } else if (lower.includes('sit') || lower.includes('lie') || lower.includes('bend')) {
+      matchedParts.push('back');
+    } else {
+      matchedParts.push('knee');
+    }
+  }
+
+  if (matchedParts.length === 0) return null;
+
+  // Prioritize heart if present, then head
+  const primaryPart = matchedParts.includes('heart')
+    ? 'heart'
+    : matchedParts.includes('head')
+    ? 'head'
+    : matchedParts[0];
+
+  const secondaryParts = matchedParts.filter((p) => p !== primaryPart);
+
+  // Determine Severity
+  let severity: 'NORMAL' | 'MILD' | 'MODERATE' | 'SERIOUS' | 'EMERGENCY' = 'MODERATE';
+  if (isSevere || (matchedParts.includes('heart') && matchedParts.includes('head'))) {
+    severity = 'EMERGENCY';
+  } else if (primaryPart === 'heart' || lower.includes('breath') || lower.includes('faint')) {
+    severity = 'SERIOUS';
+  } else if (lower.includes('mild') || lower.includes('slight') || lower.includes('కొద్దిగా') || lower.includes('हल्का')) {
+    severity = 'MILD';
+  } else {
+    severity = 'MODERATE';
+  }
+
+  const isEmergency = severity === 'EMERGENCY' || severity === 'SERIOUS';
+  const info = CLINICAL_PAIN_GUIDELINES[primaryPart];
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  let symptomName = `${info.name} discomfort`;
+  if (lower.includes('dizzy') || lower.includes('spinning') || lower.includes('చక్కర్') || lower.includes('మైకం')) {
+    symptomName = 'Dizziness & Vertigo';
+  } else if (lower.includes('headache') || lower.includes('migraine')) {
+    symptomName = 'Headache';
+  } else if (lower.includes('breath') || lower.includes('ఆయాసం')) {
+    symptomName = 'Breathing difficulty';
+  } else if (lower.includes('heart') || lower.includes('chest')) {
+    symptomName = 'Heart & Chest discomfort';
+  } else if (lower.includes('stomach') || lower.includes('belly')) {
+    symptomName = 'Stomach / Abdominal pain';
+  } else if (lower.includes('weakness')) {
+    symptomName = 'Sudden weakness';
+  }
+
+  const labelSuffix = isEmergency ? ' (EMERGENCY ACTIVE)' : ' (Symptom Logged)';
+
+  return {
+    hasPain: true,
+    bodyPart: primaryPart,
+    secondaryParts: secondaryParts.length > 0 ? secondaryParts : undefined,
+    bodyPartLabel: `${info.name}${labelSuffix}`,
+    symptomSummary: `Reported ${symptomName} at ${timeStr}: "${text.trim()}" (Severity: ${severity})`,
+    rec: isEmergency ? info.urgentNotice : info.rec,
+    severity,
+    isEmergency,
+    symptomName,
+    spokenReply: {
+      english: isEmergency
+        ? `Emergency detected. I have updated your Body Map for ${symptomName} with a red alert dot and initiated an alert to your Care Circle. Please sit down and stay calm.`
+        : `I have updated your Body Map for ${symptomName} with an active alert dot, Rajamma. Please sit comfortably and rest.`,
+      telugu: isEmergency
+        ? `అత్యవసర పరిస్థితి గుర్తించబడింది. మీ ${symptomName} కోసం బాడీ మ్యాప్‌లో ఎరుపు రంగు గుర్తు ఉంచాను మరియు మీ కేర్ సర్కిల్‌కి హెచ్చరిక పంపాను. దయచేసి కూర్చోండి.`
+        : `రాజమ్మ గారు, మీ ${info.teluguName} సమస్యను బాడీ మ్యాప్‌లో నమోదు చేశాను. దయచేసి విశ్రాంతి తీసుకోండి.`,
+      hindi: isEmergency
+        ? `आपातकाल का पता चला है। मैंने बॉडी मैप पर ${symptomName} के लिए लाल निशान लगा दिया है और आपके केयर सर्कल को सूचित कर दिया है। कृपया बैठ जाएं।`
+        : `राजम्मा जी, मैंने आपके बॉडी मैप में ${info.hindiName} के लक्षण को अपडेट कर दिया है। कृपया आराम करें।`,
+    },
+  };
+}
+
+// Progress & Resolution Detection: Checks if patient reports pain is improving, resolved, or worsening
+export function detectPainProgressInText(
+  text: string,
+  currentObs?: Record<BodyPartKey, BodyPartObservation>
+): {
+  hasProgress: boolean;
+  bodyPart: BodyPartKey;
+  status: PainStatus;
+  patientFeedback: string;
+  spokenReply: {
+    english: string;
+    telugu: string;
+    hindi: string;
+  };
+} | null {
+  if (!text || typeof text !== 'string') return null;
+  const lower = text.toLowerCase().trim();
+
+  // 1. Detect if patient says pain is completely resolved / gone away
+  const resolvedPhrases = [
+    'completely gone',
+    'gone away',
+    'went away',
+    'pain is gone',
+    'no pain now',
+    'no more pain',
+    'no pain anymore',
+    'completely fine',
+    'cured',
+    'healed',
+    'disappeared',
+    'vanished',
+    'not paining',
+    'doesn\'t hurt anymore',
+    'does not hurt anymore',
+    'fully recovered',
+    'all gone',
+    'totally fine',
+    'పూర్తిగా పోయింది',
+    'నొప్పి లేదు',
+    'నయమైపోయింది',
+    'మొత్తం పోయింది',
+    'ఇప్పుడు నొప్పి లేదు',
+    'నొప్పి తగ్గింది పూర్తిగా',
+    'బిల్కుల్ నయం',
+    'బిల్కుల్ పోయింది',
+    'बिल्कुल ठीक',
+    'दर्द चला गया',
+    'अब दर्द नहीं है',
+    'दर्द खत्म हो गया',
+    'पूरी तरह ठीक',
+    'दर्द नहीं हो रहा',
+  ];
+
+  // 2. Detect if patient says pain is improving / better / less
+  const improvingPhrases = [
+    'improving',
+    'improved',
+    'better now',
+    'much better',
+    'getting better',
+    'feeling better',
+    'less pain',
+    'pain is less',
+    'subsiding',
+    'eased',
+    'relief',
+    'feels better',
+    'tolerable',
+    'slight pain only',
+    'it improved',
+    'has improved',
+    'it has improved',
+    'some relief',
+    'తగ్గింది',
+    'నయమైంది',
+    'కాస్త బాగుంది',
+    'మెరుగయింది',
+    'నొప్పి తగ్గింది',
+    'కాస్త నయం',
+    'హాయిగా ఉంది',
+    'పర్వాలేదు',
+    'సులభంగా ఉంది',
+    'सुधार है',
+    'कम हो गया',
+    'बेहतर है',
+    'आराम मिला',
+    'दर्द कम है',
+    'सुधर रहा है',
+    'पहले से बेहतर',
+    'काफी आराम',
+  ];
+
+  // 3. Detect if patient says pain is worsening / severe
+  const worseningPhrases = [
+    'worse',
+    'worsening',
+    'more pain',
+    'severe pain',
+    'hurting more',
+    'still hurting',
+    'not improving',
+    'bad pain',
+    'sharp pain',
+    'cannot bear',
+    'ఎక్కువైంది',
+    'బాధగా ఉంది',
+    'ఇంకా నొప్పి',
+    'తగ్గలేదు',
+    'బాధ ఎక్కువ',
+    'తీవ్రమైన నొప్పి',
+    'बढ़ गया',
+    'बहुत दर्द है',
+    'ठीक नहीं हुआ',
+    'दर्द ज्यादा है',
+    'दर्द बढ़ रहा है',
+  ];
+
+  const isResolved = resolvedPhrases.some((p) => lower.includes(p));
+  const isImproving = improvingPhrases.some((p) => lower.includes(p));
+  const isWorsening = worseningPhrases.some((p) => lower.includes(p));
+
+  if (!isResolved && !isImproving && !isWorsening) {
+    return null;
+  }
+
+  // Determine status
+  const status: PainStatus = isResolved ? 'resolved' : isImproving ? 'improving' : 'active';
+
+  // Determine which body part is being discussed
+  const bodyPartKeywords: Record<BodyPartKey, string[]> = {
+    heart: ['heart', 'chest', 'ribs', 'breath', 'గుండె', 'ఛాతీ', 'छाती', 'दिल'],
+    knee: ['knee', 'knees', 'leg', 'legs', 'joint', 'మోకాలు', 'మోకాళ్ళు', 'కీళ్ళు', 'घुटना', 'घुटने'],
+    head: ['head', 'headache', 'migraine', 'temple', 'తల', 'తలనొప్పి', 'सिर', 'सिरदर्द'],
+    back: ['back', 'spine', 'lumbar', 'waist', 'వెన్ను', 'నడుము', 'पीठ', 'कमर'],
+    stomach: ['stomach', 'belly', 'tummy', 'abdomen', 'కడుపు', 'పొట్ట', 'पेट'],
+    shoulder: ['shoulder', 'arm', 'hand', 'భుజం', 'చేయి', 'कंधा', 'हाथ'],
+    feet: ['foot', 'feet', 'ankle', 'heel', 'పాదాలు', 'పాదం', 'पैर', 'एड़ी'],
+  };
+
+  let matchedPart: BodyPartKey | null = null;
   for (const [part, keywords] of Object.entries(bodyPartKeywords) as [BodyPartKey, string[]][]) {
     if (keywords.some((k) => lower.includes(k))) {
       matchedPart = part;
@@ -311,49 +654,247 @@ export function detectPainInText(text: string): {
     }
   }
 
-  // If pain keyword is present but no specific body part was matched, check context or default to knee
-  if (hasPainKeyword && !matchedPart) {
-    if (lower.includes('walk') || lower.includes('stand') || lower.includes('step')) {
-      matchedPart = 'knee';
-    } else if (lower.includes('sit') || lower.includes('lie') || lower.includes('bend')) {
-      matchedPart = 'back';
-    } else {
-      matchedPart = 'knee';
+  // If no body part explicitly mentioned, find the active health issue from localStorage or observations
+  if (!matchedPart && typeof window !== 'undefined') {
+    const activeIssue = localStorage.getItem('aura_active_health_issue') as BodyPartKey | null;
+    if (activeIssue && bodyPartKeywords[activeIssue]) {
+      matchedPart = activeIssue;
     }
   }
 
-  // Also if someone says "my knee hurts" or "headache" (even without explicit separate word "pain")
-  if (!hasPainKeyword && matchedPart) {
-    if (
-      lower.includes('headache') ||
-      lower.includes('hurt') ||
-      lower.includes('ache') ||
-      lower.includes('stiff') ||
-      lower.includes('నొప్పి') ||
-      lower.includes('दर्द')
-    ) {
-      // It is a pain complaint
-    } else {
-      return null;
+  if (!matchedPart && currentObs) {
+    const activeEntry = (Object.entries(currentObs) as [BodyPartKey, BodyPartObservation][]).find(
+      ([, obs]) => obs.painStatus === 'active' || obs.isPainActive || obs.painStatus === 'improving'
+    );
+    if (activeEntry) {
+      matchedPart = activeEntry[0];
     }
   }
 
-  if (!matchedPart) return null;
+  // Default fallback to knee if still unassigned
+  if (!matchedPart) {
+    matchedPart = 'knee';
+  }
 
   const info = CLINICAL_PAIN_GUIDELINES[matchedPart];
-  const now = new Date();
-  const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  if (status === 'resolved') {
+    return {
+      hasProgress: true,
+      bodyPart: matchedPart,
+      status: 'resolved',
+      patientFeedback: text.trim(),
+      spokenReply: {
+        english: `Wonderful news, Rajamma! I am so delighted that your ${info.name} pain has completely gone away. I have removed the dot from your Body Map and updated your medical records.`,
+        telugu: `అద్భుతమైన వార్త రాజమ్మ గారు! మీ ${info.teluguName} నొప్పి పూర్తిగా తగ్గిపోయినందుకు చాలా ఆనందంగా ఉంది. బాడీ మ్యాప్ నుండి గుర్తును తొలగించాను మరియు రికార్డులను అప్‌డేట్ చేశాను.`,
+        hindi: `बहुत अच्छी खबर है राजम्मा जी! मुझे बहुत खुशी है कि आपके ${info.hindiName} का दर्द पूरी तरह ठीक हो गया है। मैंने बॉडी मैप से निशान हटा दिया है और आपके रिकॉर्ड्स अपडेट कर दिए हैं।`,
+      },
+    };
+  }
+
+  if (status === 'improving') {
+    return {
+      hasProgress: true,
+      bodyPart: matchedPart,
+      status: 'improving',
+      patientFeedback: text.trim(),
+      spokenReply: {
+        english: `I am so glad to hear your ${info.name} pain is improving, Rajamma! I have updated your Body Map with a green dot and recorded your recovery in your medical history. Please continue taking your tablets on time.`,
+        telugu: `మీ ${info.teluguName} నొప్పి తగ్గుతున్నందుకు చాలా సంతోషం రాజమ్మ గారు! బాడీ మ్యాప్‌లో గ్రీన్ డాట్ మార్క్ చేశాను మరియు మీ రికార్డుల్లో నమోదు చేశాను. మాత్రలు సమయానికి వేసుకోండి.`,
+        hindi: `यह सुनकर बहुत अच्छा लगा कि आपके ${info.hindiName} के दर्द में सुधार हो रहा है, राजम्मा जी! मैंने बॉडी मैप पर हरा निशान लगा दिया है और इसे रिकॉर्ड में दर्ज कर लिया है।`,
+      },
+    };
+  }
 
   return {
-    hasPain: true,
+    hasProgress: true,
     bodyPart: matchedPart,
-    bodyPartLabel: `${info.name} (Pain Reported)`,
-    symptomSummary: `Reported ${info.name} pain at ${timeStr}: "${text.trim()}"`,
-    rec: info.rec,
+    status: 'active',
+    patientFeedback: text.trim(),
     spokenReply: {
-      english: `I have updated your body map for ${info.name} pain, Rajamma. Please sit comfortably and rest. I have logged this for your care circle.`,
-      telugu: `రాజమ్మ గారు, మీ ${info.teluguName} నొప్పిని బాడీ మ్యాప్‌లో నమోదు చేశాను. దయచేసి విశ్రాంతి తీసుకోండి.`,
-      hindi: `राजम्मा जी, मैंने आपके बॉडी मैप में ${info.hindiName} के दर्द को अपडेट कर दिया है। कृपया आराम करें।`,
+      english: `I hear you, Rajamma. Your ${info.name} discomfort is noted as active with a red alert dot on your Body Map. Please rest quietly, and I will alert your family if you need immediate care.`,
+      telugu: `మీ బాధను నేను విన్నాను రాజమ్మ గారు. మీ ${info.teluguName} నొప్పిని బాడీ మ్యాప్‌లో ఎరుపు రంగు గుర్తుతో ఉంచాను. దయచేసి విశ్రాంతి తీసుకోండి.`,
+      hindi: `मैंने आपकी बात सुनी, राजम्मा जी। आपके ${info.hindiName} के दर्द को बॉडी मैप पर लाल निशान के साथ सक्रिय रखा गया है। कृपया आराम करें।`,
     },
   };
+}
+
+// Synchronize health progress across Body Map, Patient Records, and AI Companion in real time
+export function syncHealthProgress(
+  bodyPart: BodyPartKey,
+  status: PainStatus,
+  patientQuote: string
+): void {
+  if (typeof window === 'undefined') return;
+
+  const info = CLINICAL_PAIN_GUIDELINES[bodyPart];
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const dateStr = now.toISOString().split('T')[0];
+
+  // 1. Update Body Map Observations
+  let observations: Record<BodyPartKey, BodyPartObservation> = INITIAL_BODY_OBSERVATIONS;
+  try {
+    const saved = localStorage.getItem('aura_body_observations');
+    if (saved) observations = JSON.parse(saved);
+  } catch {}
+
+  const current = observations[bodyPart] || INITIAL_BODY_OBSERVATIONS[bodyPart];
+  const isPainActive = status === 'active';
+  const color = status === 'active' ? '#ef4444' : status === 'improving' ? '#10b981' : '#10b981';
+
+  let note = current.note;
+  if (status === 'resolved') {
+    note = `Pain completely resolved at ${timeStr}. Confirmed by patient: "${patientQuote}"`;
+  } else if (status === 'improving') {
+    note = `Symptom improving at ${timeStr}. Patient noted: "${patientQuote}"`;
+  } else if (status === 'active') {
+    note = `Active pain reported at ${timeStr}: "${patientQuote}"`;
+  }
+
+  observations[bodyPart] = {
+    ...current,
+    painStatus: status,
+    isPainActive,
+    color,
+    note,
+    reportedAt: now.toISOString(),
+    lastPatientFeedback: patientQuote,
+  };
+
+  try {
+    localStorage.setItem('aura_body_observations', JSON.stringify(observations));
+    if (status === 'active' || status === 'improving') {
+      localStorage.setItem('aura_active_health_issue', bodyPart);
+    }
+  } catch {}
+
+  // 2. Update Patient Medical Records (Append real-time Symptom Log)
+  try {
+    let records: any[] = [];
+    const rSaved = localStorage.getItem('aura_patient_records');
+    if (rSaved) records = JSON.parse(rSaved);
+
+    const logTitle =
+      status === 'resolved'
+        ? `${info.name} Pain - Completely Resolved`
+        : status === 'improving'
+        ? `${info.name} Discomfort - Improving`
+        : `Active ${info.name} Pain Reported`;
+
+    const logMetric =
+      status === 'resolved'
+        ? 'Pain 0/10 · Completely Resolved'
+        : status === 'improving'
+        ? 'Improving Status · Green Dot'
+        : 'Active Pain · Red Alert';
+
+    const newLog = {
+      type: 'SYMPTOM LOG',
+      date: dateStr,
+      by: 'Siri Voice AI / Patient Feedback',
+      title: logTitle,
+      desc: `Patient reported: "${patientQuote}". Symptom status updated to ${status.toUpperCase()} on Body Map.`,
+      metric: logMetric,
+      status: status === 'active' ? 'Needs Attention' : 'Normal',
+      statusOk: status !== 'active',
+      icon: status === 'resolved' ? '⚪' : status === 'improving' ? '🟢' : '🔴',
+      filterKey: 'Symptom Log',
+      hasPain: status !== 'resolved',
+      painLocation: bodyPart,
+      painSeverity: status === 'active' ? 'moderate' : 'mild',
+    };
+
+    records = [newLog, ...records];
+    localStorage.setItem('aura_patient_records', JSON.stringify(records));
+  } catch {}
+
+  // 3. Dispatch events to keep all views synchronized in real time
+  window.dispatchEvent(
+    new CustomEvent('aura_body_map_updated', {
+      detail: {
+        bodyPart,
+        status,
+        quote: patientQuote,
+        label: info.name,
+        observations,
+        timestamp: Date.now(),
+      },
+    })
+  );
+
+  window.dispatchEvent(new CustomEvent('aura_records_updated'));
+}
+
+// Helper to get active health conditions that Siri should proactively check on
+export function getActiveHealthConditions(): {
+  bodyPart: BodyPartKey;
+  name: string;
+  teluguName: string;
+  hindiName: string;
+  status: PainStatus;
+  condition?: string;
+  tablets?: string[];
+}[] {
+  if (typeof window === 'undefined') return [];
+
+  let obs: Record<BodyPartKey, BodyPartObservation> = INITIAL_BODY_OBSERVATIONS;
+  try {
+    const saved = localStorage.getItem('aura_body_observations');
+    if (saved) obs = JSON.parse(saved);
+  } catch {}
+
+  const activeList: {
+    bodyPart: BodyPartKey;
+    name: string;
+    teluguName: string;
+    hindiName: string;
+    status: PainStatus;
+    condition?: string;
+    tablets?: string[];
+  }[] = [];
+
+  for (const [key, val] of Object.entries(obs) as [BodyPartKey, BodyPartObservation][]) {
+    const status = val.painStatus || (val.isPainActive ? 'active' : 'none');
+    if (status === 'active' || status === 'improving') {
+      const guide = CLINICAL_PAIN_GUIDELINES[key];
+      activeList.push({
+        bodyPart: key,
+        name: guide.name,
+        teluguName: guide.teluguName,
+        hindiName: guide.hindiName,
+        status,
+        condition: val.condition || val.label,
+        tablets: val.reliefTablets,
+      });
+    }
+  }
+
+  return activeList;
+}
+
+// Generates Siri's proactive check-in question for daily conversation
+export function generateProactiveHealthQuestion(
+  lang: 'en-US' | 'te-IN' | 'hi-IN' = 'en-US',
+  userName = 'Rajamma'
+): string | null {
+  const activeConditions = getActiveHealthConditions();
+  if (activeConditions.length === 0) return null;
+
+  // Prioritize heart if present, otherwise the first active issue
+  const priorityIssue =
+    activeConditions.find((c) => c.bodyPart === 'heart') || activeConditions[0];
+
+  const part = priorityIssue.bodyPart;
+  const name = priorityIssue.name;
+  const telugu = priorityIssue.teluguName;
+  const hindi = priorityIssue.hindiName;
+
+  if (lang === 'te-IN') {
+    return `నమస్కారం ${userName} గారు! నేను మీ ఆరోగ్యాన్ని పర్యవేక్షిస్తున్నాను. మీ ${telugu} నొప్పి ఇప్పుడు ఎలా ఉంది? కాస్త నయమైందా?`;
+  }
+  if (lang === 'hi-IN') {
+    return `नमस्ते ${userName} जी! आपके ${hindi} का दर्द अब कैसा है? क्या उसमें कुछ सुधार हुआ है?`;
+  }
+  return `Hello ${userName}! I am keeping an eye on your health. How is your ${name.toLowerCase()} pain now? Has it improved?`;
 }

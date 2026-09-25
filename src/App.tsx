@@ -7,6 +7,7 @@ import { Settings } from './screens/Settings';
 import { SignInScreen } from './screens/SignInScreen';
 import { SignUpScreen } from './screens/SignUpScreen';
 import { EmergencySOSModal } from './components/EmergencySOSModal';
+import { EmergencyActionModal } from './components/EmergencyActionModal';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { WakeWordProvider, useWakeWord } from './context/WakeWordContext';
 import { AuthModal } from './components/AuthModal';
@@ -311,7 +312,7 @@ function MainContent() {
         <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
           {authScreen === 'signin' && (
             <SignInScreen
-              onBack={closeAuthScreen}
+              onBack={() => openAuthScreen('signup')}
               onNavigateToSignUp={() => openAuthScreen('signup')}
             />
           )}
@@ -492,6 +493,9 @@ function MainContent() {
             </button>
           </div>
         )}
+
+        {/* Global Emergency Warning & Direct Action Modal */}
+        <EmergencyActionModal />
 
         {/* Firebase Authentication Modal (Sign In / Sign Up / Google) */}
         <AuthModal />

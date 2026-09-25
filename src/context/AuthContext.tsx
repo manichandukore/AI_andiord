@@ -38,8 +38,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [authScreen, setAuthScreen] = useState<AuthScreenType>(() => {
-    // When opening app newly without an active session, prompt sign in / sign up
-    return sessionStorage.getItem('aura_authenticated_session') ? null : 'signin';
+    // When opening app for the first time, immediately show Sign Up screen
+    return sessionStorage.getItem('aura_authenticated_session') === 'true' ? null : 'signup';
   });
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
@@ -49,10 +49,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
 
       if (currentUser) {
-        // If already authenticated and session was active, close auth screen
-        if (sessionStorage.getItem('aura_authenticated_session') === 'true') {
-          setAuthScreen(null);
-        }
+        // Authenticated: take user directly to the main app dashboard
+        sessionStorage.setItem('aura_authenticated_session', 'true');
+        setAuthScreen(null);
+
         // Sync or retrieve user profile
         try {
           const userDocRef = doc(db, 'users', currentUser.uid);
@@ -76,10 +76,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.warn('Profile initialization note:', err);
         }
       } else {
-        // When user is null, if not already guest, ensure sign in screen is prompted
-        if (sessionStorage.getItem('aura_authenticated_session') !== 'guest') {
-          setAuthScreen('signin');
-        }
+        // Unauthenticated: if no active session, show signup (or keep signin if user chose signin)
+        sessionStorage.removeItem('aura_authenticated_session');
+        setAuthScreen((prev) => (prev === 'signin' ? 'signin' : 'signup'));
       }
     });
 
@@ -92,8 +91,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const closeAuthScreen = () => {
-    sessionStorage.setItem('aura_authenticated_session', 'guest');
-    setAuthScreen(null);
+    if (user) {
+      setAuthScreen(null);
+    }
   };
 
   const signInWithGoogle = async () => {

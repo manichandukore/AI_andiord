@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { VitalReading, SmartWatchLiveTelemetry } from '../types/vitals';
+import { analyzeHealthSymptoms, executeEmergencyWorkflow } from '../utils/emergencyDetection';
+import { syncHealthProgress } from '../utils/painDetection';
 
 interface AddReadingModalProps {
   isOpen: boolean;
@@ -94,6 +96,34 @@ export function AddReadingModal({
     };
 
     onSaveReading(newReading);
+
+    // Health monitoring analysis: evaluate vital readings and any reported symptoms
+    const symptomAnalysis = analyzeHealthSymptoms(notes.trim(), undefined, {
+      hr,
+      bpSys: sys,
+      bpDia: dia,
+      spo2: o2,
+      glucose: sugar,
+    });
+
+    if (symptomAnalysis.hasSymptom) {
+      syncHealthProgress(
+        symptomAnalysis.primaryBodyPart,
+        'active',
+        notes.trim() || `Health vitals: HR ${hr || '--'} bpm, BP ${sys || '--'}/${dia || '--'} mmHg`
+      );
+      for (const sec of symptomAnalysis.secondaryBodyParts) {
+        syncHealthProgress(
+          sec,
+          'active',
+          notes.trim() || `Health vitals: HR ${hr || '--'} bpm, BP ${sys || '--'}/${dia || '--'} mmHg`
+        );
+      }
+      if (symptomAnalysis.isEmergency) {
+        executeEmergencyWorkflow(symptomAnalysis);
+      }
+    }
+
     onClose();
   };
 

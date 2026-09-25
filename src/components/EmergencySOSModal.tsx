@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getCareCircleMembers, getPrimaryEmergencyContact, getPatientName, recordEmergencyEvent } from '../utils/careCircleStorage';
 
 interface EmergencySOSModalProps {
   isOpen: boolean;
@@ -11,12 +12,15 @@ export function EmergencySOSModal({
   isOpen,
   onClose,
   onConfirm,
-  userName = 'Rajamma',
+  userName,
 }: EmergencySOSModalProps) {
+  const patient = userName || getPatientName();
   const [countdown, setCountdown] = useState(5);
   const [isDispatched, setIsDispatched] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [dispatchedData, setDispatchedData] = useState<any>(null);
+  const members = getCareCircleMembers();
+  const primary = getPrimaryEmergencyContact();
 
   useEffect(() => {
     if (!isOpen) {
@@ -38,18 +42,41 @@ export function EmergencySOSModal({
 
   const triggerEmergencyAlert = async () => {
     setIsSending(true);
+    const cleanPhone = primary.phone.replace(/[^0-9+]/g, '');
+
+    // Trigger phone call immediately
+    try {
+      window.location.href = `tel:${cleanPhone}`;
+    } catch {}
+
+    // Record emergency incident
+    recordEmergencyEvent({
+      id: `emg-sos-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      dateStr: new Date().toISOString().split('T')[0],
+      patientName: patient,
+      symptoms: ['Manual 1-Touch Emergency SOS'],
+      severity: 'EMERGENCY',
+      bodyParts: ['heart', 'head'],
+      contactNotified: {
+        name: primary.name,
+        role: primary.role,
+        phone: primary.phone,
+      },
+      callInitiated: true,
+      messageDispatched: true,
+      channelUsed: 'WhatsApp Gateway + Native Call',
+      summary: `Urgent SOS dispatched for ${patient}. Primary responder: ${primary.name} (${primary.role}).`,
+    });
+
     try {
       const res = await fetch('/api/whatsapp/send-emergency', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          symptomText: 'Acute Health Discomfort / SOS Alert',
-          contacts: [
-            { id: '1', name: 'Suresh Dev', role: 'Primary Caregiver (Son)', phone: '+91 98765 43210' },
-            { id: '2', name: 'Lakshmi Devi', role: 'Neighbor', phone: '+91 98765 43211' },
-            { id: '3', name: 'Dr. Roy Pillai', role: 'Geriatric GP', phone: '+91 98765 43212' },
-          ],
-          userName,
+          symptomText: 'Emergency SOS Alert',
+          contacts: members,
+          userName: patient,
           location: 'Home (Flat 302, Hyderabad)',
         }),
       });
@@ -59,6 +86,7 @@ export function EmergencySOSModal({
       if (onConfirm) onConfirm();
     } catch {
       setIsDispatched(true);
+      if (onConfirm) onConfirm();
     } finally {
       setIsSending(false);
     }
@@ -250,40 +278,59 @@ export function EmergencySOSModal({
               >
                 Dispatched Contacts:
               </p>
-              {[
-                { name: 'Suresh Dev', role: 'Primary Son', phone: '+919876543210' },
-                { name: 'Lakshmi Devi', role: 'Neighbor', phone: '+919876543211' },
-                { name: 'Dr. Roy Pillai', role: 'Geriatric GP', phone: '+919876543212' },
-              ].map((c) => (
-                <div
-                  key={c.name}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '4px 0',
-                    fontSize: 11,
-                  }}
-                >
-                  <span style={{ fontWeight: 600, color: '#111827' }}>{c.name}</span>
-                  <a
-                    href={`https://wa.me/${c.phone}?text=🚨%20Urgent%20health%20alert%20for%20Rajamma`}
-                    target="_blank"
-                    rel="noreferrer"
+              {members.map((c) => {
+                const cleanPhone = c.phone.replace(/[^0-9+]/g, '');
+                return (
+                  <div
+                    key={c.name}
                     style={{
-                      color: '#059669',
-                      fontWeight: 700,
-                      textDecoration: 'none',
-                      fontSize: 10,
-                      padding: '2px 6px',
-                      borderRadius: 6,
-                      background: '#dcfce7',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '5px 0',
+                      fontSize: 11,
+                      borderBottom: '1px solid #f3f4f6',
                     }}
                   >
-                    Open WA ↗
-                  </a>
-                </div>
-              ))}
+                    <div>
+                      <span style={{ fontWeight: 700, color: '#111827' }}>{c.name}</span>
+                      <span style={{ fontSize: 9.5, color: '#6b7280', display: 'block' }}>{c.role}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <a
+                        href={`tel:${cleanPhone}`}
+                        style={{
+                          color: '#dc2626',
+                          fontWeight: 700,
+                          textDecoration: 'none',
+                          fontSize: 10,
+                          padding: '3px 6px',
+                          borderRadius: 6,
+                          background: '#fee2e2',
+                        }}
+                      >
+                        📞 Call
+                      </a>
+                      <a
+                        href={`https://wa.me/${cleanPhone.replace(/^\+/, '')}?text=🚨%20Urgent%20health%20emergency%20for%20${encodeURIComponent(patient)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          color: '#059669',
+                          fontWeight: 700,
+                          textDecoration: 'none',
+                          fontSize: 10,
+                          padding: '3px 6px',
+                          borderRadius: 6,
+                          background: '#dcfce7',
+                        }}
+                      >
+                        WA ↗
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             <div style={{ display: 'flex', gap: 8, width: '100%' }}>

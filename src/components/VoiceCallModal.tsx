@@ -1,4 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  analyzeHealthSymptoms,
+  detectContactRequest,
+  executeEmergencyWorkflow,
+} from '../utils/emergencyDetection';
+import { detectPainProgressInText, syncHealthProgress } from '../utils/painDetection';
 
 interface VoiceCallModalProps {
   isOpen: boolean;
@@ -402,13 +408,93 @@ export function VoiceCallModal({
   };
 
   // Send text to Gemini 3.8 Live API
-  const handleSendLiveText = (text: string) => {
+  const handleSendLiveText = async (text: string) => {
     if (!text.trim()) return;
 
     interruptPlayback();
     const newConv: Message[] = [...conversation, { role: 'user', content: text.trim(), source: 'live-text' }];
     setConversation(newConv);
     setInputText('');
+
+    // 1. Check for explicit contact request: "Call my son", "Phone my son", etc.
+    const contactReq = detectContactRequest(text);
+    if (contactReq) {
+      const member = contactReq.resolvedMember;
+      const cleanPhone = member.phone.replace(/[^0-9+]/g, '');
+
+      if (contactReq.type === 'CALL') {
+        const reply =
+          selectedLang === 'te-IN'
+            ? `మీరు కోరినట్లుగా మీ ${member.role} ${member.name} గారికి ఫోన్ కనెక్ట్ చేస్తున్నాను.`
+            : selectedLang === 'hi-IN'
+            ? `आपके कहे अनुसार आपके ${member.role} ${member.name} जी को कॉल लगाया जा रहा है।`
+            : `Calling ${member.name} (${member.role}) right away.`;
+
+        setConversation([...newConv, { role: 'assistant', content: reply, source: 'fallback' }]);
+        setStatusMessage(`📞 Connecting call to ${member.name}...`);
+
+        try {
+          window.location.href = `tel:${cleanPhone}`;
+        } catch {}
+
+        window.dispatchEvent(
+          new CustomEvent('aura_emergency_alert_triggered', {
+            detail: {
+              symptomAnalysis: {
+                hasSymptom: true,
+                primaryBodyPart: 'heart',
+                secondaryBodyParts: [],
+                severity: 'SERIOUS',
+                isEmergency: true,
+                symptomsDetected: [`Direct Call to ${member.name} (${member.role}) Requested`],
+                clinicalSummary: `${userName} explicitly requested to call ${member.name} (${member.role}).`,
+                patientName: userName,
+                recommendedAction: 'Stay on the line for caregiver connection.',
+                userQuote: text,
+                spokenGuidance: { english: reply, telugu: reply, hindi: reply },
+              },
+              contact: member,
+              callUrl: `tel:${cleanPhone}`,
+              whatsappUrl: `https://wa.me/${cleanPhone.replace(/^\+/, '')}?text=${encodeURIComponent(`Urgent Call Request from ${userName}: Please contact immediately.`)}`,
+              smsUrl: `sms:${cleanPhone}?body=${encodeURIComponent(`Urgent Call Request from ${userName}`)}`,
+              partsUpdated: ['heart'],
+              actionReport: `Initiated direct call to ${member.name} (${member.role}) at ${member.phone}.`,
+            },
+          })
+        );
+        return;
+      }
+    }
+
+    // 2. Health Symptom & Severity Analysis
+    const symptomAnalysis = analyzeHealthSymptoms(text, userName);
+    if (symptomAnalysis.hasSymptom) {
+      // Automatic Body Map Dot Updates without requiring manual dot addition
+      syncHealthProgress(symptomAnalysis.primaryBodyPart, 'active', text);
+      for (const sec of symptomAnalysis.secondaryBodyParts) {
+        syncHealthProgress(sec, 'active', text);
+      }
+
+      if (symptomAnalysis.isEmergency) {
+        await executeEmergencyWorkflow(symptomAnalysis);
+        const spoken =
+          selectedLang === 'te-IN'
+            ? symptomAnalysis.spokenGuidance.telugu
+            : selectedLang === 'hi-IN'
+            ? symptomAnalysis.spokenGuidance.hindi
+            : symptomAnalysis.spokenGuidance.english;
+
+        setConversation([...newConv, { role: 'assistant', content: spoken, source: 'fallback' }]);
+        setStatusMessage(`🚨 Emergency Alert: ${symptomAnalysis.symptomsDetected.join(' + ')}`);
+        return;
+      }
+    }
+
+    // 3. Progress check (recovery / resolved)
+    const progressCheck = detectPainProgressInText(text);
+    if (progressCheck) {
+      syncHealthProgress(progressCheck.bodyPart, progressCheck.status, text);
+    }
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(

@@ -1,54 +1,24 @@
-import React, { useState } from 'react';
-
-interface CareMember {
-  initials: string;
-  name: string;
-  role: string;
-  phone: string;
-  email: string;
-  location: string;
-  avatarColor: string;
-  badge: string | null;
-}
-
-const CARE_MEMBERS: CareMember[] = [
-  {
-    initials: 'SD',
-    name: 'Suresh Dev',
-    role: 'Primary Caregiver (Son)',
-    phone: '+91 98765 43210',
-    email: 'suresh.dev@example.com',
-    location: 'Hyderabad (15 mins away)',
-    avatarColor: '#059669',
-    badge: 'PRIMARY 1ST RESPONDER',
-  },
-  {
-    initials: 'LD',
-    name: 'Lakshmi Devi',
-    role: 'Support (Neighbor)',
-    phone: '+91 98765 43211',
-    email: 'lakshmi.d@example.com',
-    location: 'Apartment 302 (Same Floor)',
-    avatarColor: '#f59e0b',
-    badge: null,
-  },
-  {
-    initials: 'RP',
-    name: 'Dr. Roy Pillai',
-    role: 'Geriatric GP',
-    phone: '+91 98765 43212',
-    email: 'dr.roy@cityclinic.org',
-    location: 'City Care Hospital',
-    avatarColor: '#ef4444',
-    badge: null,
-  },
-];
+import React, { useState, useEffect } from 'react';
+import {
+  CareMember,
+  getCareCircleMembers,
+  saveCareCircleMembers,
+  getPatientName,
+  recordEmergencyEvent,
+  getEmergencyHistory,
+  EmergencyEvent,
+} from '../utils/careCircleStorage';
 
 export function CareCircle() {
   const [autoWhatsApp, setAutoWhatsApp] = useState(true);
   const [sosSent, setSosSent] = useState(false);
   const [sosDispatchedData, setSosDispatchedData] = useState<any>(null);
-  const [members, setMembers] = useState<CareMember[]>(CARE_MEMBERS);
+  const [members, setMembers] = useState<CareMember[]>(() => getCareCircleMembers());
+
+  // Keep members synced with global storage
+  useEffect(() => {
+    saveCareCircleMembers(members);
+  }, [members]);
 
   // In-app modals state
   const [showAddModal, setShowAddModal] = useState(false);
@@ -64,6 +34,42 @@ export function CareCircle() {
 
   const handleTriggerSOS = async () => {
     setSosSent(true);
+    const patient = getPatientName();
+    const primary = members.find((m) => m.badge?.includes('PRIMARY') || m.isPrimary) || members[0];
+    const cleanPhone = primary.phone.replace(/[^0-9+]/g, '');
+
+    // 1. Dispatch global Emergency Warning & Action overlay
+    window.dispatchEvent(
+      new CustomEvent('aura_emergency_alert_triggered', {
+        detail: {
+          symptomAnalysis: {
+            hasSymptom: true,
+            primaryBodyPart: 'heart',
+            secondaryBodyParts: ['head'],
+            severity: 'EMERGENCY',
+            isEmergency: true,
+            symptomsDetected: ['Manual Emergency SOS Triggered'],
+            clinicalSummary: `Immediate Emergency SOS initiated by ${patient}. All Care Circle responders notified.`,
+            patientName: patient,
+            recommendedAction: 'Stay seated in a safe location. Awaiting immediate caregiver call.',
+            userQuote: 'Urgent SOS from Care Circle screen',
+            spokenGuidance: {
+              english: `Emergency alert active for ${patient}. Alerting ${primary.name}.`,
+              telugu: `అత్యవసర హెచ్చరిక నమోదైంది ${patient} గారు. ${primary.name} గారికి సమాచారం పంపాను.`,
+              hindi: `आपातकालीन अलर्ट सक्रिय है ${patient} जी। ${primary.name} जी को सूचित किया जा रहा है।`,
+            },
+          },
+          contact: primary,
+          callUrl: `tel:${cleanPhone}`,
+          whatsappUrl: `https://wa.me/${cleanPhone.replace(/^\+/, '')}?text=${encodeURIComponent(`🚨 URGENT HEALTH EMERGENCY: ${patient} triggered SOS alert. Immediate assistance requested.`)}`,
+          smsUrl: `sms:${cleanPhone}?body=${encodeURIComponent(`EMERGENCY SOS: ${patient} needs assistance immediately.`)}`,
+          partsUpdated: ['heart', 'head'],
+          actionReport: `Dispatched Emergency SOS to ${primary.name} (${primary.role}) at ${primary.phone}.`,
+        },
+      })
+    );
+
+    // 2. Call backend emergency dispatch
     try {
       const res = await fetch('/api/whatsapp/send-emergency', {
         method: 'POST',
@@ -71,7 +77,7 @@ export function CareCircle() {
         body: JSON.stringify({
           symptomText: 'Acute Health Discomfort / Urgent SOS Alert from Rajamma',
           contacts: members,
-          userName: 'Rajamma',
+          userName: patient,
           location: 'Home (Flat 302, Hyderabad)',
         }),
       });
@@ -107,19 +113,34 @@ export function CareCircle() {
     if (!formName.trim() || !formPhone.trim()) return;
     const colors = ['#059669', '#7c3aed', '#f59e0b', '#2563eb', '#dc2626'];
     const randomColor = colors[members.length % colors.length];
-    setMembers((prev) => [
-      ...prev,
-      {
-        initials: formName.slice(0, 2).toUpperCase(),
-        name: formName.trim(),
-        role: formRole.trim() || 'Caregiver',
-        phone: formPhone.trim(),
-        email: `${formName.toLowerCase().replace(/\s+/g, '')}@example.com`,
-        location: formLocation.trim() || 'Nearby',
-        avatarColor: randomColor,
-        badge: null,
-      },
-    ]);
+    const roleLower = formRole.toLowerCase();
+    const rel = roleLower.includes('son')
+      ? 'son'
+      : roleLower.includes('daughter')
+      ? 'daughter'
+      : roleLower.includes('doctor') || roleLower.includes('gp')
+      ? 'doctor'
+      : roleLower.includes('neighbor')
+      ? 'neighbor'
+      : 'caregiver';
+
+    const newMember: CareMember = {
+      id: `member-${Date.now()}`,
+      initials: formName.slice(0, 2).toUpperCase(),
+      name: formName.trim(),
+      role: formRole.trim() || 'Caregiver',
+      relationship: rel,
+      phone: formPhone.trim(),
+      email: `${formName.toLowerCase().replace(/\s+/g, '')}@example.com`,
+      location: formLocation.trim() || 'Nearby',
+      avatarColor: randomColor,
+      badge: null,
+      isPrimary: false,
+    };
+
+    const updated = [...members, newMember];
+    setMembers(updated);
+    saveCareCircleMembers(updated);
     setShowAddModal(false);
     setFormName('');
     setFormPhone('+91 ');
