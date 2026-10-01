@@ -610,6 +610,15 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
                       </>
                     )}
 
+                    {/* Moderate / Heavy Pain = Orange Dot with pulsating rings */}
+                    {status === 'moderate' && (
+                      <>
+                        <circle cx={cx} cy={cy} r={r + 3.4} fill="none" stroke="#f97316" strokeWidth="1.2" opacity="0.85" />
+                        <circle cx={cx} cy={cy} r={r + 5.6} fill="none" stroke="#f97316" strokeWidth="0.8" opacity="0.45" />
+                        <circle cx={cx} cy={cy} r={r} fill="#f97316" stroke="white" strokeWidth="1.2" />
+                      </>
+                    )}
+
                     {/* Improving Pain = Green Dot with soft glow */}
                     {status === 'improving' && (
                       <>
@@ -652,6 +661,7 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
               const isSelected = selectedPart === key;
               const status: PainStatus = info.painStatus || (info.isPainActive ? 'active' : 'none');
               const isRed = status === 'active';
+              const isOrange = status === 'moderate';
               const isGreen = status === 'improving';
               const isResolved = status === 'resolved' || status === 'none';
 
@@ -661,8 +671,8 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
                   style={{
                     borderRadius: 10,
                     padding: '6px 8px',
-                    background: isRed ? '#fef2f2' : isGreen ? '#f0fdf4' : isSelected ? '#eff6ff' : '#f9fafb',
-                    border: `1.5px solid ${isRed ? '#ef4444' : isGreen ? '#10b981' : isSelected ? '#3b82f6' : '#e5e7eb'}`,
+                    background: isRed ? '#fef2f2' : isOrange ? '#fff7ed' : isGreen ? '#f0fdf4' : isSelected ? '#eff6ff' : '#f9fafb',
+                    border: `1.5px solid ${isRed ? '#ef4444' : isOrange ? '#f97316' : isGreen ? '#10b981' : isSelected ? '#3b82f6' : '#e5e7eb'}`,
                     transition: 'all 0.18s',
                     fontFamily: "'Nunito', sans-serif",
                   }}
@@ -674,6 +684,7 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                       {/* Status Dot */}
                       {isRed && <div style={{ width: 7, height: 7, borderRadius: 3.5, background: '#ef4444', flexShrink: 0, boxShadow: '0 0 6px #ef4444' }} />}
+                      {isOrange && <div style={{ width: 7, height: 7, borderRadius: 3.5, background: '#f97316', flexShrink: 0, boxShadow: '0 0 6px #f97316' }} />}
                       {isGreen && <div style={{ width: 7, height: 7, borderRadius: 3.5, background: '#10b981', flexShrink: 0, boxShadow: '0 0 6px #10b981' }} />}
                       {isResolved && <div style={{ width: 7, height: 7, borderRadius: 3.5, border: '1px dashed #94a3b8', flexShrink: 0 }} />}
 
@@ -681,7 +692,7 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
                         style={{
                           fontSize: 10.5,
                           fontWeight: 800,
-                          color: isRed ? '#b91c1c' : isGreen ? '#15803d' : '#111827',
+                          color: isRed ? '#b91c1c' : isOrange ? '#c2410c' : isGreen ? '#15803d' : '#111827',
                           lineHeight: 1.2,
                         }}
                       >
@@ -695,11 +706,11 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
                           fontWeight: 700,
                           padding: '1px 5px',
                           borderRadius: 4,
-                          background: isRed ? '#fee2e2' : isGreen ? '#dcfce7' : '#f1f5f9',
-                          color: isRed ? '#dc2626' : isGreen ? '#15803d' : '#64748b',
+                          background: isRed ? '#fee2e2' : isOrange ? '#ffedd5' : isGreen ? '#dcfce7' : '#f1f5f9',
+                          color: isRed ? '#dc2626' : isOrange ? '#c2410c' : isGreen ? '#15803d' : '#64748b',
                         }}
                       >
-                        {isRed ? 'RED · ACTIVE' : isGreen ? 'GREEN · IMPROVING' : 'CLEAR'}
+                        {isRed ? 'RED · ACTIVE' : isOrange ? 'ORANGE · MODERATE' : isGreen ? 'GREEN · IMPROVING' : 'CLEAR'}
                       </span>
                     </div>
 
@@ -835,6 +846,8 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
             >
               {(currentObs.painStatus || (currentObs.isPainActive ? 'active' : 'none')) === 'active'
                 ? `🚨 AI Pain Guidance: ${currentObs.label.split(' (')[0]}`
+                : (currentObs.painStatus === 'moderate')
+                ? `🟠 Moderate Pain Notice: ${currentObs.label.split(' (')[0]}`
                 : (currentObs.painStatus === 'improving')
                 ? `🟢 Recovery Progress: ${currentObs.label.split(' (')[0]}`
                 : `⚪ Clear Baseline: ${currentObs.label.split(' (')[0]}`}
@@ -857,6 +870,22 @@ export function Overview({ onNavigateTab, onVoiceCall, onEmergencySOS, externalO
                 }}
               >
                 🟢 Improving
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetPainStatus(selectedPart, 'moderate', `${selectedPart} moderate/heavy pain`)}
+                style={{
+                  background: currentObs.painStatus === 'moderate' ? '#f97316' : '#ffedd5',
+                  color: currentObs.painStatus === 'moderate' ? 'white' : '#c2410c',
+                  border: 'none',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                }}
+              >
+                🟠 Moderate
               </button>
               <button
                 type="button"

@@ -4,6 +4,10 @@ import {
   getCareCircleMembers,
   saveCareCircleMembers,
   getPatientName,
+  getPatientAddress,
+  getGoogleMapsLocationLink,
+  getLiveLocationInfo,
+  formatCareMessage,
   recordEmergencyEvent,
   getEmergencyHistory,
   EmergencyEvent,
@@ -35,8 +39,24 @@ export function CareCircle() {
   const handleTriggerSOS = async () => {
     setSosSent(true);
     const patient = getPatientName();
+    const liveLoc = await getLiveLocationInfo();
+    const address = liveLoc.address;
+    const mapsLink = liveLoc.mapsUrl;
     const primary = members.find((m) => m.badge?.includes('PRIMARY') || m.isPrimary) || members[0];
     const cleanPhone = primary.phone.replace(/[^0-9+]/g, '');
+
+    const careGuidance =
+      '• Immediate caregiver response requested.\n• Keep patient in a seated, comfortable position.\n• Check vital signs (Blood Pressure & Pulse).\n• Have emergency GP contact ready (Dr. Roy Pillai: +91 98765 43212).';
+
+    const sosMsg = formatCareMessage({
+      patientName: patient,
+      recipient: primary,
+      symptoms: ['Manual Emergency SOS Triggered'],
+      severity: 'EMERGENCY',
+      careGuidance,
+      location: address,
+      mapsUrl: mapsLink,
+    });
 
     // 1. Dispatch global Emergency Warning & Action overlay
     window.dispatchEvent(
@@ -49,9 +69,9 @@ export function CareCircle() {
             severity: 'EMERGENCY',
             isEmergency: true,
             symptomsDetected: ['Manual Emergency SOS Triggered'],
-            clinicalSummary: `Immediate Emergency SOS initiated by ${patient}. All Care Circle responders notified.`,
+            clinicalSummary: `Immediate Emergency SOS initiated by ${patient}. All Care Circle responders notified with location.`,
             patientName: patient,
-            recommendedAction: 'Stay seated in a safe location. Awaiting immediate caregiver call.',
+            recommendedAction: careGuidance,
             userQuote: 'Urgent SOS from Care Circle screen',
             spokenGuidance: {
               english: `Emergency alert active for ${patient}. Alerting ${primary.name}.`,
@@ -61,10 +81,12 @@ export function CareCircle() {
           },
           contact: primary,
           callUrl: `tel:${cleanPhone}`,
-          whatsappUrl: `https://wa.me/${cleanPhone.replace(/^\+/, '')}?text=${encodeURIComponent(`🚨 URGENT HEALTH EMERGENCY: ${patient} triggered SOS alert. Immediate assistance requested.`)}`,
-          smsUrl: `sms:${cleanPhone}?body=${encodeURIComponent(`EMERGENCY SOS: ${patient} needs assistance immediately.`)}`,
+          whatsappUrl: `https://wa.me/${cleanPhone.replace(/^\+/, '')}?text=${encodeURIComponent(sosMsg)}`,
+          smsUrl: `sms:${cleanPhone}?body=${encodeURIComponent(sosMsg)}`,
+          location: address,
+          mapsUrl: mapsLink,
           partsUpdated: ['heart', 'head'],
-          actionReport: `Dispatched Emergency SOS to ${primary.name} (${primary.role}) at ${primary.phone}.`,
+          actionReport: `Dispatched Emergency SOS with location to ${primary.name} (${primary.role}) at ${primary.phone}.`,
         },
       })
     );
@@ -75,10 +97,13 @@ export function CareCircle() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          symptomText: 'Acute Health Discomfort / Urgent SOS Alert from Rajamma',
+          symptomText: `Acute Health Discomfort / Urgent SOS Alert from ${patient}`,
           contacts: members,
           userName: patient,
-          location: 'Home (Flat 302, Hyderabad)',
+          location: address,
+          mapsUrl: mapsLink,
+          careInstructions: careGuidance,
+          severity: 'EMERGENCY',
         }),
       });
       const data = await res.json();
@@ -91,16 +116,29 @@ export function CareCircle() {
           name: m.name,
           phone: m.phone,
           status: 'simulated_delivery',
-          waLink: `https://wa.me/${m.phone.replace(/[^0-9]/g, '')}?text=URGENT%20SOS`,
+          waLink: `https://wa.me/${m.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(sosMsg)}`,
         })),
       });
     }
   };
 
-  const handleWhatsAppDirect = (member: CareMember) => {
+  const handleWhatsAppDirect = async (member: CareMember) => {
     const cleanPhone = member.phone.replace(/[^0-9]/g, '');
+    const patient = getPatientName();
+    const liveLoc = await getLiveLocationInfo();
+    const address = liveLoc.address;
+    const mapsLink = liveLoc.mapsUrl;
     const message = encodeURIComponent(
-      `Hello ${member.name}, this is an update regarding Rajamma's daily wellness monitoring.`
+      formatCareMessage({
+        patientName: patient,
+        recipient: member,
+        customMessage: `Daily health & wellness update for ${patient}. All vitals monitored.`,
+        severity: 'NORMAL',
+        careGuidance:
+          '• Daily senior wellness tracking active.\n• Hydration and gentle routine maintained.\n• Prescribed schedule on track.',
+        location: address,
+        mapsUrl: mapsLink,
+      })
     );
     window.open(`https://wa.me/${cleanPhone}?text=${message}`, '_blank');
   };

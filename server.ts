@@ -842,12 +842,26 @@ Return JSON strictly in this schema:
   // Automatic WhatsApp Emergency Dispatch API Route
   app.post("/api/whatsapp/send-emergency", async (req, res) => {
     try {
-      const { symptomText = "Acute Health Discomfort", contacts = [], userName = "Rajamma", location = "Home (Flat 302, Hyderabad)" } = req.body;
+      const {
+        symptomText = "Acute Health Discomfort",
+        contacts = [],
+        userName = "Rajamma",
+        location = "Flat 302, Green Acres, Banjara Hills, Hyderabad",
+        mapsUrl,
+        careInstructions,
+        severity = "SERIOUS",
+      } = req.body;
       const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const googleMapsLocation =
+        mapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
 
-      const alertMessage = `🚨 URGENT HEALTH EMERGENCY: ${userName} reported ${symptomText} at ${timestamp}. Immediate Care Circle response requested. Location: ${location}.`;
+      const careBlock = careInstructions
+        ? `\n\n🩺 IMMEDIATE CARE GUIDANCE:\n${careInstructions}`
+        : `\n\n🩺 IMMEDIATE CARE GUIDANCE:\n• Keep patient seated, calm, and resting in a well-ventilated area.\n• Monitor vitals (Blood pressure & Pulse).\n• Have prescribed medications ready (Amlodipine 5mg on record).\n• If severe chest pain or dizziness persists > 5 mins, call 108/112 ambulance.`;
 
-      console.log(`[WhatsApp Auto-Dispatch Engine] Triggered for ${userName}. Symptom: ${symptomText}. Contacts: ${contacts.length}`);
+      const alertMessage = `🚨 EMERGENCY ALERT\n\n${userName} reported ${symptomText} at ${timestamp}.\nImmediate Care Circle response requested.${careBlock}\n\n📍 Location: ${location}\n🗺️ Google Maps: ${googleMapsLocation}`;
+
+      console.log(`[WhatsApp Auto-Dispatch Engine] Triggered for ${userName}. Symptom: ${symptomText}. Location: ${location}`);
 
       const dispatchedContacts = contacts.map((c: any) => {
         const cleanPhone = (c.phone || '').replace(/[^0-9]/g, '');
@@ -859,6 +873,8 @@ Return JSON strictly in this schema:
           phone: c.phone,
           whatsappUrl: waUrl,
           dispatchedAt: timestamp,
+          location,
+          mapsUrl: googleMapsLocation,
           status: 'DISPATCHED_TO_WHATSAPP_GATEWAY'
         };
       });
@@ -866,10 +882,12 @@ Return JSON strictly in this schema:
       res.json({
         success: true,
         alertMessage,
+        location,
+        mapsUrl: googleMapsLocation,
         timestamp,
         totalNotified: dispatchedContacts.length,
         contacts: dispatchedContacts,
-        note: "Automatic emergency WhatsApp alert prepared & dispatched to Care Circle relatives."
+        note: "Automatic emergency WhatsApp alert prepared & dispatched to Care Circle relatives with live location."
       });
     } catch (err) {
       console.error("Error in /api/whatsapp/send-emergency:", err);

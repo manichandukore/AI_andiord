@@ -1,7 +1,9 @@
 // Clinical pain detection and body map update utility
+import { getPatientName } from './careCircleStorage';
+
 export type BodyPartKey = 'head' | 'shoulder' | 'heart' | 'back' | 'stomach' | 'knee' | 'feet';
 
-export type PainStatus = 'active' | 'improving' | 'resolved' | 'none';
+export type PainStatus = 'active' | 'moderate' | 'improving' | 'resolved' | 'none';
 
 export interface BodyPartObservation {
   label: string;
@@ -10,7 +12,7 @@ export interface BodyPartObservation {
   rec: string;
   reportedAt?: string;
   isPainActive?: boolean;
-  painStatus?: PainStatus; // 'active' (red dot) | 'improving' (green dot) | 'resolved' (no dot) | 'none'
+  painStatus?: PainStatus; // 'active' (red dot) | 'moderate' (orange dot) | 'improving' (green dot) | 'resolved' (no dot) | 'none'
   condition?: string;
   source?: string;
   lastPatientFeedback?: string;
@@ -149,6 +151,7 @@ export interface PainDetectionResult {
   severity: 'NORMAL' | 'MILD' | 'MODERATE' | 'SERIOUS' | 'EMERGENCY';
   isEmergency: boolean;
   symptomName: string;
+  dotStatus?: PainStatus;
   spokenReply: {
     english: string;
     telugu: string;
@@ -481,6 +484,15 @@ export function detectPainInText(text: string): PainDetectionResult | null {
   }
 
   const labelSuffix = isEmergency ? ' (EMERGENCY ACTIVE)' : ' (Symptom Logged)';
+  const patient = getPatientName();
+  const isModeratePain =
+    lower.includes('heavy') ||
+    lower.includes('quite heavy') ||
+    lower.includes('moderate') ||
+    lower.includes('medium') ||
+    lower.includes('కాస్త ఎక్కువ') ||
+    lower.includes('మధ్యస్థ');
+  const dotStatus: PainStatus = isModeratePain ? 'moderate' : 'active';
 
   return {
     hasPain: true,
@@ -491,17 +503,20 @@ export function detectPainInText(text: string): PainDetectionResult | null {
     rec: isEmergency ? info.urgentNotice : info.rec,
     severity,
     isEmergency,
+    dotStatus,
     symptomName,
     spokenReply: {
       english: isEmergency
         ? `Emergency detected. I have updated your Body Map for ${symptomName} with a red alert dot and initiated an alert to your Care Circle. Please sit down and stay calm.`
-        : `I have updated your Body Map for ${symptomName} with an active alert dot, Rajamma. Please sit comfortably and rest.`,
+        : isModeratePain
+        ? `I have updated your Body Map for ${symptomName} with an orange indicator for moderate/heavy pain, ${patient}. Please rest quietly.`
+        : `I have updated your Body Map for ${symptomName} with an active red dot, ${patient}. Please sit comfortably and rest.`,
       telugu: isEmergency
         ? `అత్యవసర పరిస్థితి గుర్తించబడింది. మీ ${symptomName} కోసం బాడీ మ్యాప్‌లో ఎరుపు రంగు గుర్తు ఉంచాను మరియు మీ కేర్ సర్కిల్‌కి హెచ్చరిక పంపాను. దయచేసి కూర్చోండి.`
-        : `రాజమ్మ గారు, మీ ${info.teluguName} సమస్యను బాడీ మ్యాప్‌లో నమోదు చేశాను. దయచేసి విశ్రాంతి తీసుకోండి.`,
+        : `${patient} గారు, మీ ${info.teluguName} సమస్యను బాడీ మ్యాప్‌లో నమోదు చేశాను. దయచేసి విశ్రాంతి తీసుకోండి.`,
       hindi: isEmergency
         ? `आपातकाल का पता चला है। मैंने बॉडी मैप पर ${symptomName} के लिए लाल निशान लगा दिया है और आपके केयर सर्कल को सूचित कर दिया है। कृपया बैठ जाएं।`
-        : `राजम्मा जी, मैंने आपके बॉडी मैप में ${info.hindiName} के लक्षण को अपडेट कर दिया है। कृपया आराम करें।`,
+        : `${patient} जी, मैंने आपके बॉडी मैप में ${info.hindiName} के लक्षण को अपडेट कर दिया है। कृपया आराम करें।`,
     },
   };
 }
@@ -523,6 +538,7 @@ export function detectPainProgressInText(
 } | null {
   if (!text || typeof text !== 'string') return null;
   const lower = text.toLowerCase().trim();
+  const patient = getPatientName();
 
   // 1. Detect if patient says pain is completely resolved / gone away
   const resolvedPhrases = [
@@ -530,9 +546,19 @@ export function detectPainProgressInText(
     'gone away',
     'went away',
     'pain is gone',
+    'knee pain is gone',
+    'headache is gone',
+    'back pain is gone',
+    'chest pain is gone',
+    'pain is completely gone',
+    'pain gone',
+    'is gone',
     'no pain now',
     'no more pain',
     'no pain anymore',
+    'don\'t have pain anymore',
+    'dont have pain anymore',
+    'do not have pain anymore',
     'completely fine',
     'cured',
     'healed',
@@ -550,24 +576,37 @@ export function detectPainProgressInText(
     'మొత్తం పోయింది',
     'ఇప్పుడు నొప్పి లేదు',
     'నొప్పి తగ్గింది పూర్తిగా',
+    'నొప్పి పోయింది',
     'బిల్కుల్ నయం',
     'బిల్కుల్ పోయింది',
     'बिल्कुल ठीक',
     'दर्द चला गया',
     'अब दर्द नहीं है',
     'दर्द खत्म हो गया',
+    'दर्द खत्म',
     'पूरी तरह ठीक',
     'दर्द नहीं हो रहा',
   ];
 
   // 2. Detect if patient says pain is improving / better / less
   const improvingPhrases = [
-    'improving',
-    'improved',
+    'getting better',
+    'is getting better',
+    'is better',
     'better now',
     'much better',
-    'getting better',
     'feeling better',
+    'feeling better now',
+    'improving',
+    'improved',
+    'it improved',
+    'has improved',
+    'it has improved',
+    'reduced',
+    'has reduced',
+    'pain has reduced',
+    'pain reduced',
+    'the pain has reduced',
     'less pain',
     'pain is less',
     'subsiding',
@@ -576,9 +615,6 @@ export function detectPainProgressInText(
     'feels better',
     'tolerable',
     'slight pain only',
-    'it improved',
-    'has improved',
-    'it has improved',
     'some relief',
     'తగ్గింది',
     'నయమైంది',
@@ -589,6 +625,8 @@ export function detectPainProgressInText(
     'హాయిగా ఉంది',
     'పర్వాలేదు',
     'సులభంగా ఉంది',
+    'బాగుంది ఇప్పుడు',
+    'సుధార ఉంది',
     'सुधार है',
     'कम हो गया',
     'बेहतर है',
@@ -599,41 +637,48 @@ export function detectPainProgressInText(
     'काफी आराम',
   ];
 
-  // 3. Detect if patient says pain is worsening / severe
-  const worseningPhrases = [
-    'worse',
-    'worsening',
-    'more pain',
-    'severe pain',
-    'hurting more',
-    'still hurting',
-    'not improving',
-    'bad pain',
-    'sharp pain',
-    'cannot bear',
+  // 3. Detect if patient says pain is moderate / heavy / quite heavy (Orange Dot)
+  const moderatePhrases = [
+    'heavy',
+    'quite heavy',
+    'heavy pain',
+    'pain is heavy',
+    'pain is quite heavy',
+    'moderate',
+    'moderate pain',
+    'medium pain',
+    'getting worse',
+    'pain is getting worse',
+    'somewhat heavy',
+    'మధ్యస్థ',
+    'కాస్త ఎక్కువ',
     'ఎక్కువైంది',
-    'బాధగా ఉంది',
-    'ఇంకా నొప్పి',
-    'తగ్గలేదు',
     'బాధ ఎక్కువ',
-    'తీవ్రమైన నొప్పి',
-    'बढ़ गया',
-    'बहुत दर्द है',
-    'ठीक नहीं हुआ',
-    'दर्द ज्यादा है',
-    'दर्द बढ़ रहा है',
+    'తీవ్రం కాస్త',
+    'నొప్పి ఎక్కువైంది',
+    'నొప్పి కాస్త ఎక్కువ',
+    'మధ్యస్థ నొప్పి',
+    'మధ్యస్థంగా ఉంది',
+    'నొప్పి పెరుగుతోంది',
+    'मध्यम दर्द',
+    'काफी तेज',
+    'दर्द बढ़ रहा',
+    'भारी दर्द',
+    'काफी भारी',
   ];
 
-  const isResolved = resolvedPhrases.some((p) => lower.includes(p));
+  const isResolved =
+    resolvedPhrases.some((p) => lower.includes(p)) ||
+    (lower.includes('gone') && (lower.includes('pain') || lower.includes('hurt') || lower.includes('ache')));
   const isImproving = improvingPhrases.some((p) => lower.includes(p));
-  const isWorsening = worseningPhrases.some((p) => lower.includes(p));
+  const isModerate = moderatePhrases.some((p) => lower.includes(p));
 
-  if (!isResolved && !isImproving && !isWorsening) {
+  if (!isResolved && !isImproving && !isModerate) {
     return null;
   }
 
   // Determine status
-  const status: PainStatus = isResolved ? 'resolved' : isImproving ? 'improving' : 'active';
+  const status: PainStatus = isResolved ? 'resolved' : isImproving ? 'improving' : 'moderate';
 
   // Determine which body part is being discussed
   const bodyPartKeywords: Record<BodyPartKey, string[]> = {
@@ -685,9 +730,9 @@ export function detectPainProgressInText(
       status: 'resolved',
       patientFeedback: text.trim(),
       spokenReply: {
-        english: `Wonderful news, Rajamma! I am so delighted that your ${info.name} pain has completely gone away. I have removed the dot from your Body Map and updated your medical records.`,
-        telugu: `అద్భుతమైన వార్త రాజమ్మ గారు! మీ ${info.teluguName} నొప్పి పూర్తిగా తగ్గిపోయినందుకు చాలా ఆనందంగా ఉంది. బాడీ మ్యాప్ నుండి గుర్తును తొలగించాను మరియు రికార్డులను అప్‌డేట్ చేశాను.`,
-        hindi: `बहुत अच्छी खबर है राजम्मा जी! मुझे बहुत खुशी है कि आपके ${info.hindiName} का दर्द पूरी तरह ठीक हो गया है। मैंने बॉडी मैप से निशान हटा दिया है और आपके रिकॉर्ड्स अपडेट कर दिए हैं।`,
+        english: `Wonderful news, ${patient}! I am so delighted that your ${info.name} pain has completely gone away. I have removed the dot from your Body Map and updated your medical records.`,
+        telugu: `అద్భుతమైన వార్త ${patient} గారు! మీ ${info.teluguName} నొప్పి పూర్తిగా తగ్గిపోయినందుకు చాలా ఆనందంగా ఉంది. బాడీ మ్యాప్ నుండి గుర్తును తొలగించాను మరియు రికార్డులను అప్‌డేట్ చేశాను.`,
+        hindi: `बहुत अच्छी खबर है ${patient} जी! मुझे बहुत खुशी है कि आपके ${info.hindiName} का दर्द पूरी तरह ठीक हो गया है। मैंने बॉडी मैप से निशान हटा दिया है और आपके रिकॉर्ड्स अपडेट कर दिए हैं।`,
       },
     };
   }
@@ -699,9 +744,23 @@ export function detectPainProgressInText(
       status: 'improving',
       patientFeedback: text.trim(),
       spokenReply: {
-        english: `I am so glad to hear your ${info.name} pain is improving, Rajamma! I have updated your Body Map with a green dot and recorded your recovery in your medical history. Please continue taking your tablets on time.`,
-        telugu: `మీ ${info.teluguName} నొప్పి తగ్గుతున్నందుకు చాలా సంతోషం రాజమ్మ గారు! బాడీ మ్యాప్‌లో గ్రీన్ డాట్ మార్క్ చేశాను మరియు మీ రికార్డుల్లో నమోదు చేశాను. మాత్రలు సమయానికి వేసుకోండి.`,
-        hindi: `यह सुनकर बहुत अच्छा लगा कि आपके ${info.hindiName} के दर्द में सुधार हो रहा है, राजम्मा जी! मैंने बॉडी मैप पर हरा निशान लगा दिया है और इसे रिकॉर्ड में दर्ज कर लिया है।`,
+        english: `I am so glad to hear your ${info.name} pain is getting better, ${patient}! I have updated your Body Map with a green dot and recorded your recovery in your medical history. Please continue taking your tablets on time.`,
+        telugu: `మీ ${info.teluguName} నొప్పి తగ్గుతున్నందుకు చాలా సంతోషం ${patient} గారు! బాడీ మ్యాప్‌లో గ్రీన్ డాట్ మార్క్ చేశాను మరియు మీ రికార్డుల్లో నమోదు చేశాను. మాత్రలు సమయానికి వేసుకోండి.`,
+        hindi: `यह सुनकर बहुत अच्छा लगा कि आपके ${info.hindiName} के दर्द में सुधार हो रहा है, ${patient} जी! मैंने बॉडी मैप पर हरा निशान लगा दिया है और इसे रिकॉर्ड में दर्ज कर लिया है।`,
+      },
+    };
+  }
+
+  if (status === 'moderate') {
+    return {
+      hasProgress: true,
+      bodyPart: matchedPart,
+      status: 'moderate',
+      patientFeedback: text.trim(),
+      spokenReply: {
+        english: `I understand, ${patient}. Your ${info.name} discomfort is marked with an orange indicator on your Body Map as moderate/heavy. Please rest quietly, avoid exertion, and keep hydrated.`,
+        telugu: `మీ బాధను నేను విన్నాను ${patient} గారు. మీ ${info.teluguName} నొప్పి కాస్త ఎక్కువగా ఉన్నట్లుగా బాడీ మ్యాప్‌లో ఆరెంజ్ రంగులో గుర్తించాను. దయచేసి విశ్రాంతి తీసుకోండి.`,
+        hindi: `मैंने आपकी बात नोट कर ली है, ${patient} जी। आपके ${info.hindiName} के दर्द को बॉडी मैप पर नारंगी निशान के साथ मध्यम/भारी दर्ज किया गया है। कृपया आराम करें।`,
       },
     };
   }
@@ -712,9 +771,9 @@ export function detectPainProgressInText(
     status: 'active',
     patientFeedback: text.trim(),
     spokenReply: {
-      english: `I hear you, Rajamma. Your ${info.name} discomfort is noted as active with a red alert dot on your Body Map. Please rest quietly, and I will alert your family if you need immediate care.`,
-      telugu: `మీ బాధను నేను విన్నాను రాజమ్మ గారు. మీ ${info.teluguName} నొప్పిని బాడీ మ్యాప్‌లో ఎరుపు రంగు గుర్తుతో ఉంచాను. దయచేసి విశ్రాంతి తీసుకోండి.`,
-      hindi: `मैंने आपकी बात सुनी, राजम्मा जी। आपके ${info.hindiName} के दर्द को बॉडी मैप पर लाल निशान के साथ सक्रिय रखा गया है। कृपया आराम करें।`,
+      english: `I hear you, ${patient}. Your ${info.name} discomfort is noted as active with a red alert dot on your Body Map. Please rest quietly, and I will alert your family if you need immediate care.`,
+      telugu: `మీ బాధను నేను విన్నాను ${patient} గారు. మీ ${info.teluguName} నొప్పిని బాడీ మ్యాప్‌లో ఎరుపు రంగు గుర్తుతో ఉంచాను. దయచేసి విశ్రాంతి తీసుకోండి.`,
+      hindi: `मैंने आपकी बात सुनी, ${patient} जी। आपके ${info.hindiName} के दर्द को बॉडी मैप पर लाल निशान के साथ सक्रिय रखा गया है। कृपया आराम करें।`,
     },
   };
 }
@@ -740,14 +799,21 @@ export function syncHealthProgress(
   } catch {}
 
   const current = observations[bodyPart] || INITIAL_BODY_OBSERVATIONS[bodyPart];
-  const isPainActive = status === 'active';
-  const color = status === 'active' ? '#ef4444' : status === 'improving' ? '#10b981' : '#10b981';
+  const isPainActive = status === 'active' || status === 'moderate';
+  const color =
+    status === 'active'
+      ? '#ef4444' // Red Dot
+      : status === 'moderate'
+      ? '#f97316' // Orange Dot
+      : '#10b981'; // Green Dot / Clear
 
   let note = current.note;
   if (status === 'resolved') {
     note = `Pain completely resolved at ${timeStr}. Confirmed by patient: "${patientQuote}"`;
   } else if (status === 'improving') {
     note = `Symptom improving at ${timeStr}. Patient noted: "${patientQuote}"`;
+  } else if (status === 'moderate') {
+    note = `Moderate / heavy pain reported at ${timeStr}: "${patientQuote}"`;
   } else if (status === 'active') {
     note = `Active pain reported at ${timeStr}: "${patientQuote}"`;
   }
@@ -764,7 +830,7 @@ export function syncHealthProgress(
 
   try {
     localStorage.setItem('aura_body_observations', JSON.stringify(observations));
-    if (status === 'active' || status === 'improving') {
+    if (status === 'active' || status === 'moderate' || status === 'improving') {
       localStorage.setItem('aura_active_health_issue', bodyPart);
     }
   } catch {}
@@ -780,29 +846,33 @@ export function syncHealthProgress(
         ? `${info.name} Pain - Completely Resolved`
         : status === 'improving'
         ? `${info.name} Discomfort - Improving`
+        : status === 'moderate'
+        ? `${info.name} Pain - Moderate / Heavy`
         : `Active ${info.name} Pain Reported`;
 
     const logMetric =
       status === 'resolved'
-        ? 'Pain 0/10 · Completely Resolved'
+        ? 'Pain 0/10 · Completely Resolved · No Dot'
         : status === 'improving'
         ? 'Improving Status · Green Dot'
-        : 'Active Pain · Red Alert';
+        : status === 'moderate'
+        ? 'Moderate / Heavy Pain · Orange Dot'
+        : 'Active Pain · Red Alert Dot';
 
     const newLog = {
       type: 'SYMPTOM LOG',
       date: dateStr,
-      by: 'Siri Voice AI / Patient Feedback',
+      by: 'Aura AI Voice Companion / Health Monitor',
       title: logTitle,
       desc: `Patient reported: "${patientQuote}". Symptom status updated to ${status.toUpperCase()} on Body Map.`,
       metric: logMetric,
-      status: status === 'active' ? 'Needs Attention' : 'Normal',
-      statusOk: status !== 'active',
-      icon: status === 'resolved' ? '⚪' : status === 'improving' ? '🟢' : '🔴',
+      status: status === 'active' || status === 'moderate' ? 'Needs Attention' : 'Normal',
+      statusOk: status !== 'active' && status !== 'moderate',
+      icon: status === 'resolved' ? '⚪' : status === 'improving' ? '🟢' : status === 'moderate' ? '🟠' : '🔴',
       filterKey: 'Symptom Log',
       hasPain: status !== 'resolved',
       painLocation: bodyPart,
-      painSeverity: status === 'active' ? 'moderate' : 'mild',
+      painSeverity: status === 'active' ? 'severe' : status === 'moderate' ? 'moderate' : 'mild',
     };
 
     records = [newLog, ...records];

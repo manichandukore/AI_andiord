@@ -3,11 +3,15 @@ import {
   resolveCareContact,
   getPrimaryEmergencyContact,
   getPatientName,
+  getPatientAddress,
+  getGoogleMapsLocationLink,
+  getLiveLocationInfo,
+  formatCareMessage,
   recordEmergencyEvent,
   CareMember,
   EmergencyEvent,
 } from './careCircleStorage';
-import { BodyPartKey, syncHealthProgress } from './painDetection';
+import { BodyPartKey, syncHealthProgress, CLINICAL_PAIN_GUIDELINES } from './painDetection';
 
 export type HealthSeverity = 'NORMAL' | 'MILD' | 'MODERATE' | 'SERIOUS' | 'EMERGENCY';
 
@@ -86,6 +90,84 @@ export function analyzeHealthSymptoms(
   }
 
   const lower = text.toLowerCase().trim();
+
+  // If user explicitly reports pain is gone, resolved, or improving, do not flag as acute emergency symptom
+  const isResolutionPhrase =
+    lower.includes('completely gone') ||
+    lower.includes('gone away') ||
+    lower.includes('pain is gone') ||
+    lower.includes('knee pain is gone') ||
+    lower.includes('headache is gone') ||
+    lower.includes('back pain is gone') ||
+    lower.includes('chest pain is gone') ||
+    lower.includes('pain is completely gone') ||
+    lower.includes('no pain now') ||
+    lower.includes('no more pain') ||
+    lower.includes('no pain anymore') ||
+    lower.includes('don\'t have pain') ||
+    lower.includes('dont have pain') ||
+    (lower.includes('gone') && (lower.includes('pain') || lower.includes('hurt') || lower.includes('ache'))) ||
+    lower.includes('పూర్తిగా పోయింది') ||
+    lower.includes('నొప్పి లేదు') ||
+    lower.includes('నొప్పి పోయింది') ||
+    lower.includes('दर्द चला गया') ||
+    lower.includes('दर्द खत्म');
+
+  const isImprovementPhrase =
+    lower.includes('getting better') ||
+    lower.includes('is getting better') ||
+    lower.includes('much better') ||
+    lower.includes('feeling better') ||
+    lower.includes('pain has reduced') ||
+    lower.includes('the pain has reduced') ||
+    lower.includes('pain reduced') ||
+    lower.includes('less pain') ||
+    lower.includes('నొప్పి తగ్గింది') ||
+    lower.includes('కాస్త బాగుంది') ||
+    lower.includes('సుధార ఉంది') ||
+    lower.includes('दर्द कम है') ||
+    lower.includes('सुधार है') ||
+    lower.includes('सुधर रहा');
+
+  if (isResolutionPhrase || isImprovementPhrase) {
+    const matchedPart: BodyPartKey =
+      lower.includes('chest') || lower.includes('heart')
+        ? 'heart'
+        : lower.includes('head')
+        ? 'head'
+        : lower.includes('back')
+        ? 'back'
+        : lower.includes('stomach')
+        ? 'stomach'
+        : 'knee';
+
+    return {
+      hasSymptom: false,
+      primaryBodyPart: matchedPart,
+      secondaryBodyParts: [],
+      severity: 'NORMAL',
+      isEmergency: false,
+      symptomsDetected: [],
+      clinicalSummary: isResolutionPhrase ? 'Pain completely resolved.' : 'Pain is improving and subsiding.',
+      userQuote: text,
+      patientName: name,
+      recommendedAction: isResolutionPhrase
+        ? 'Pain resolved. Continue healthy lifestyle and prescribed regular maintenance.'
+        : 'Rest comfortably as recovery continues.',
+      spokenGuidance: {
+        english: isResolutionPhrase
+          ? `Delighted your pain has gone away, ${name}!`
+          : `Glad to hear you are getting better, ${name}. Keep resting comfortably.`,
+        telugu: isResolutionPhrase
+          ? `మీ నొప్పి తగ్గిపోయినందుకు చాలా సంతోషం ${name} గారు.`
+          : `మీ ఆరోగ్యం మెరుగవుతున్నందుకు సంతోషం ${name} గారు. విశ్రాంతి తీసుకోండి.`,
+        hindi: isResolutionPhrase
+          ? `दर्द खत्म होने की खबर से बहुत खुशी हुई ${name} जी।`
+          : `आपकी सेहत सुधर रही है, जानकर अच्छा लगा ${name} जी। आराम करें।`,
+      },
+    };
+  }
+
   const symptomsFound: string[] = [];
   const affectedParts: Set<BodyPartKey> = new Set();
 
@@ -585,15 +667,22 @@ export function detectContactRequest(text: string): ExplicitContactAction | null
 
   const isMessage =
     lower.includes('message') ||
+    lower.includes('mssge') ||
+    lower.includes('msg') ||
     lower.includes('text') ||
     lower.includes('sms') ||
     lower.includes('whatsapp') ||
+    lower.includes('send') ||
+    lower.includes('inform') ||
+    lower.includes('notify') ||
+    lower.includes('tell') ||
     lower.includes('send a message') ||
+    (lower.includes('care') && (lower.includes('son') || lower.includes('daughter'))) ||
     lower.includes('సందేశం') ||
     lower.includes('మెసేజ్') ||
     lower.includes('మెసేజ్ చేయి') ||
     lower.includes('వాట్సాప్') ||
-    lower.includes('मैसेज') ||
+    lower.includes('మैसेజ') ||
     lower.includes('संदेश') ||
     lower.includes('व्हाट्सएप');
 
@@ -660,9 +749,26 @@ export async function executeEmergencyWorkflow(
   const cleanPhone = contact.phone.replace(/[^0-9+]/g, '');
   const callUrl = `tel:${cleanPhone}`;
 
-  // 3. Prepare Emergency Message (Dynamic patient name and Care Circle contact)
+  // 3. Prepare Live Location & Detailed Care Guidance
+  const liveLoc = await getLiveLocationInfo();
+  const patientAddress = liveLoc.address;
+  const mapsLink = liveLoc.mapsUrl;
   const symptomText = symptomAnalysis.symptomsDetected.join(', ') || 'acute physical distress';
-  const alertText = `Emergency Alert:\n${patient} may be experiencing ${symptomText} (${symptomAnalysis.severity}). Please contact her immediately and check on her. Location: Flat 302, Hyderabad.\nTime: ${timeStr}.`;
+
+  const careGuidance =
+    symptomAnalysis.recommendedAction ||
+    '• Keep patient seated upright, calm, and resting in a well-ventilated room.\n• Loosen tight clothing; monitor vitals (BP & Pulse).\n• Have prescribed medications ready (Amlodipine 5mg on record).\n• If severe chest pain or dizziness persists > 5 mins, call 108/112 ambulance.';
+
+  const alertText = formatCareMessage({
+    patientName: patient,
+    recipient: contact,
+    symptoms: symptomAnalysis.symptomsDetected,
+    severity: symptomAnalysis.severity,
+    bodyParts: partsToUpdate,
+    careGuidance: careGuidance,
+    location: patientAddress,
+    mapsUrl: mapsLink,
+  });
 
   const encodedMsg = encodeURIComponent(alertText);
   const waCleanPhone = cleanPhone.replace(/^\+/, '');
@@ -679,7 +785,10 @@ export async function executeEmergencyWorkflow(
         symptomText: `${symptomAnalysis.symptomsDetected.join(', ')} (${symptomAnalysis.severity})`,
         contacts: [contact],
         userName: patient,
-        location: 'Home (Flat 302, Hyderabad)',
+        location: patientAddress,
+        mapsUrl: mapsLink,
+        careInstructions: careGuidance,
+        severity: symptomAnalysis.severity,
       }),
     });
     const data = await res.json();
@@ -691,7 +800,6 @@ export async function executeEmergencyWorkflow(
   // 5. Trigger Phone Call via browser/Android webview if supported
   if (typeof window !== 'undefined') {
     try {
-      // In web/Android, initiating a tel: link opens the native device dialer
       window.location.href = callUrl;
     } catch (e) {
       console.warn('Call trigger note:', e);
@@ -715,13 +823,13 @@ export async function executeEmergencyWorkflow(
     callInitiated: true,
     messageDispatched: true,
     channelUsed: apiSuccess ? 'WhatsApp Gateway + Native Dialer' : 'Native Dialer + WhatsApp Link',
-    summary: `${patient} reported ${symptomText}. Contacted ${contact.name} (${contact.role}) at ${contact.phone}.`,
+    summary: `${patient} reported ${symptomText}. Contacted ${contact.name} (${contact.role}) at ${contact.phone}. Location: ${patientAddress}.`,
   };
 
   recordEmergencyEvent(event);
 
   // 7. Dispatch global emergency notification event for UI modal & banner
-  const actionReport = `Emergency alert active for ${patient}. Alerted ${contact.name} (${contact.role}) at ${contact.phone}. Body map updated with red alert dots for: ${partsToUpdate.join(', ').toUpperCase()}.`;
+  const actionReport = `Emergency alert active for ${patient}. Alerted ${contact.name} (${contact.role}) at ${contact.phone}. Body map updated with red alert dots for: ${partsToUpdate.join(', ').toUpperCase()}. Location: ${patientAddress}.`;
 
   if (typeof window !== 'undefined') {
     window.dispatchEvent(
@@ -732,6 +840,8 @@ export async function executeEmergencyWorkflow(
           callUrl,
           whatsappUrl,
           smsUrl,
+          location: patientAddress,
+          mapsUrl: mapsLink,
           event,
           partsUpdated: partsToUpdate,
           actionReport,
@@ -750,5 +860,133 @@ export async function executeEmergencyWorkflow(
     bodyPartsUpdated: partsToUpdate,
     actionReport,
     spokenFeedback: symptomAnalysis.spokenGuidance,
+  };
+}
+
+/**
+ * 4. EXPLICIT CARE MESSAGE DISPATCH WORKFLOW
+ * Dispatches a formatted Care & Location message to the son/caregiver
+ * via WhatsApp Gateway and prepares native WhatsApp/SMS URLs.
+ */
+export async function executeCareMessageWorkflow(
+  action: ExplicitContactAction,
+  patientName?: string,
+  userSpeech?: string
+): Promise<{
+  whatsappUrl: string;
+  smsUrl: string;
+  callUrl: string;
+  messageText: string;
+  location: string;
+  mapsUrl: string;
+  spokenReply: { english: string; telugu: string; hindi: string };
+}> {
+  const patient = patientName || getPatientName();
+  const contact = action.resolvedMember;
+  const cleanPhone = contact.phone.replace(/[^0-9+]/g, '');
+  const waCleanPhone = cleanPhone.replace(/^\+/, '');
+  const callUrl = `tel:${cleanPhone}`;
+
+  // Get live location
+  const locInfo = await getLiveLocationInfo();
+  const address = locInfo.address;
+  const mapsUrl = locInfo.mapsUrl;
+
+  // Retrieve any active symptom or observation from Body Map or user speech
+  let activeIssue = 'Health & Wellness Check';
+  let careInstructions =
+    '• Keep patient seated comfortably and hydrated with warm water.\n• Avoid sudden physical exertion or climbing stairs.\n• Check vital signs (Blood Pressure & Pulse).\n• Have prescribed medicines accessible (Amlodipine 5mg on record).\n• If discomfort worsens, contact family doctor Dr. Roy Pillai (+91 98765 43212).';
+
+  try {
+    const activePartKey = (localStorage.getItem('aura_active_health_issue') || '') as BodyPartKey;
+    if (activePartKey && CLINICAL_PAIN_GUIDELINES[activePartKey]) {
+      const g = CLINICAL_PAIN_GUIDELINES[activePartKey];
+      activeIssue = `${g.name} Pain Reported`;
+      careInstructions = `• ${g.rec}\n• ${g.urgentNotice}\n• Keep patient calm and resting.\n• Monitor vitals and have warm water accessible.`;
+    }
+  } catch {}
+
+  const fullMessage = formatCareMessage({
+    patientName: patient,
+    recipient: contact,
+    customMessage: action.customMessage || userSpeech || 'Please check in on my current health status.',
+    symptoms: [activeIssue],
+    severity: action.urgency === 'EMERGENCY' ? 'EMERGENCY' : 'SERIOUS',
+    careGuidance: careInstructions,
+    location: address,
+    mapsUrl: mapsUrl,
+  });
+
+  const encodedMsg = encodeURIComponent(fullMessage);
+  const whatsappUrl = `https://wa.me/${waCleanPhone}?text=${encodedMsg}`;
+  const smsUrl = `sms:${cleanPhone}?body=${encodedMsg}`;
+
+  // Backend WhatsApp Gateway dispatch
+  try {
+    await fetch('/api/whatsapp/send-emergency', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symptomText: action.customMessage || activeIssue,
+        contacts: [contact],
+        userName: patient,
+        location: address,
+        mapsUrl: mapsUrl,
+        careInstructions,
+      }),
+    });
+  } catch (err) {
+    console.warn('Backend WhatsApp dispatch note:', err);
+  }
+
+  // Dispatch event so UI modal/banner shows confirmation with location & care
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('aura_emergency_alert_triggered', {
+        detail: {
+          symptomAnalysis: {
+            hasSymptom: true,
+            primaryBodyPart: 'heart',
+            secondaryBodyParts: [],
+            severity: action.urgency === 'EMERGENCY' ? 'EMERGENCY' : 'SERIOUS',
+            isEmergency: action.urgency === 'EMERGENCY',
+            symptomsDetected: [action.customMessage || activeIssue],
+            clinicalSummary: `Care message with live location sent to ${contact.name} (${contact.role}).`,
+            patientName: patient,
+            recommendedAction: careInstructions,
+            userQuote: action.customMessage || userSpeech || '',
+            spokenGuidance: {
+              english: `Message with care details and live location sent to ${contact.name}.`,
+              telugu: `లొకేషన్ మరియు సంరక్షణ వివరాలతో మీ ${contact.role} ${contact.name} గారికి సందేశం పంపాను.`,
+              hindi: `लोकेशन और देखभाल की जानकारी के साथ आपके ${contact.role} ${contact.name} जी को संदेश भेज दिया गया है।`,
+            },
+          },
+          contact,
+          callUrl,
+          whatsappUrl,
+          smsUrl,
+          location: address,
+          mapsUrl,
+          partsUpdated: ['heart'],
+          actionReport: `Care message with live location dispatched to ${contact.name} (${contact.role}) at ${contact.phone}.`,
+        },
+      })
+    );
+  }
+
+  const spokenReply = {
+    english: `I have sent a message to your ${contact.role} ${contact.name} with your care instructions and live location.`,
+    telugu: `మీ ${contact.role} ${contact.name} గారికి సంరక్షణ సూచనలు మరియు లొకేషన్‌తో సందేశం పంపాను.`,
+    hindi: `आपके ${contact.role} ${contact.name} जी को देखभाल निर्देश और लाइव लोकेशन के साथ संदेश भेज दिया है।`,
+  };
+
+  return {
+    whatsappUrl,
+    smsUrl,
+    callUrl,
+    messageText: fullMessage,
+    location: address,
+    mapsUrl,
+    spokenReply,
   };
 }

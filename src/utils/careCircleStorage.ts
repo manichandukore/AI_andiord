@@ -269,3 +269,143 @@ export function getEmergencyHistory(): EmergencyEvent[] {
   } catch {}
   return [];
 }
+
+// Get the patient's registered home/stay address
+export function getPatientAddress(): string {
+  if (typeof window === 'undefined') return 'Flat 302, Green Acres, Banjara Hills, Hyderabad';
+  return (
+    localStorage.getItem('aura_senior_address') ||
+    'Flat 302, Green Acres, Banjara Hills, Hyderabad'
+  );
+}
+
+// Check if location sharing is enabled in Settings
+export function getLocationSharingEnabled(): boolean {
+  if (typeof window === 'undefined') return true;
+  return localStorage.getItem('aura_loc_sharing') !== 'false';
+}
+
+// Generate Google Maps URL for the patient's location
+export function getGoogleMapsLocationLink(customAddress?: string): string {
+  const addr = customAddress || getPatientAddress();
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`;
+}
+
+export interface LiveLocationInfo {
+  address: string;
+  mapsUrl: string;
+  coords?: { lat: number; lng: number };
+}
+
+// Get live GPS location if allowed by browser, otherwise fallback to stored address
+export async function getLiveLocationInfo(): Promise<LiveLocationInfo> {
+  const defaultAddress = getPatientAddress();
+  const defaultMapsUrl = getGoogleMapsLocationLink(defaultAddress);
+
+  if (typeof window !== 'undefined' && 'geolocation' in navigator) {
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          timeout: 3000,
+          enableHighAccuracy: true,
+          maximumAge: 60000,
+        });
+      });
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const gpsMapsUrl = `https://www.google.com/maps?q=${lat},${lng}`;
+      return {
+        address: `${defaultAddress} (GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)})`,
+        mapsUrl: gpsMapsUrl,
+        coords: { lat, lng },
+      };
+    } catch {
+      // Fall back cleanly to registered address
+    }
+  }
+
+  return {
+    address: defaultAddress,
+    mapsUrl: defaultMapsUrl,
+  };
+}
+
+export interface FormatCareMessageOptions {
+  patientName?: string;
+  recipient?: CareMember;
+  headline?: string;
+  customMessage?: string;
+  symptoms?: string[];
+  severity?: 'NORMAL' | 'MILD' | 'MODERATE' | 'SERIOUS' | 'EMERGENCY';
+  bodyParts?: string[];
+  careGuidance?: string;
+  location?: string;
+  mapsUrl?: string;
+}
+
+// Formats comprehensive Care message including First-Aid instructions, Care Circle contacts, and Location
+export function formatCareMessage(options: FormatCareMessageOptions): string {
+  const patient = options.patientName || getPatientName();
+  const recipient = options.recipient || getPrimaryEmergencyContact();
+  const members = getCareCircleMembers();
+  const doctor = members.find((m) => m.relationship === 'doctor' || m.role.toLowerCase().includes('gp'));
+  const isEmergency = options.severity === 'SERIOUS' || options.severity === 'EMERGENCY';
+
+  const timeStr = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const loc = options.location || getPatientAddress();
+  const maps = options.mapsUrl || getGoogleMapsLocationLink(loc);
+
+  const header = isEmergency ? `🚨 EMERGENCY CARE ALERT` : `💬 HEALTH & CARE UPDATE`;
+
+  let careSteps = options.careGuidance;
+  if (!careSteps) {
+    if (isEmergency) {
+      careSteps =
+        '• Keep patient seated upright, calm, and resting.\n• Loosen tight clothing; ensure good ventilation.\n• Monitor vitals (BP & Pulse).\n• Have medications on record ready (Amlodipine 5mg).\n• If chest tightness or dizziness persists, call 108/112 ambulance.';
+    } else {
+      careSteps =
+        '• Provide warm water and ensure comfortable seating.\n• Avoid sudden physical exertion or climbing stairs.\n• Keep routine daily medications on schedule.';
+    }
+  }
+
+  const lines = [
+    `${header}`,
+    `To: ${recipient.name} (${recipient.role})`,
+    `Time: ${timeStr}`,
+    ``,
+    `Patient: ${patient}`,
+  ];
+
+  if (options.customMessage) {
+    lines.push(`Message: "${options.customMessage}"`);
+  }
+
+  if (options.symptoms && options.symptoms.length > 0) {
+    lines.push(`Detected Symptoms:\n• ${options.symptoms.join('\n• ')}`);
+    if (options.severity) {
+      lines.push(`Severity: ${options.severity}`);
+    }
+  }
+
+  lines.push(
+    ``,
+    `🩺 IMMEDIATE CARE GUIDANCE:`,
+    careSteps,
+    ``,
+    `👥 CARE CIRCLE ON-CALL:`,
+    `• Primary Responder: ${recipient.name} (${recipient.phone})`
+  );
+
+  if (doctor && doctor.id !== recipient.id) {
+    lines.push(`• Physician: ${doctor.name} (${doctor.phone})`);
+  }
+
+  lines.push(
+    ``,
+    `📍 LOCATION:`,
+    `${loc}`,
+    `🗺️ Google Maps: ${maps}`
+  );
+
+  return lines.join('\n');
+}

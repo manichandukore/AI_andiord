@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CareMember, EmergencyEvent } from '../utils/careCircleStorage';
+import { CareMember, EmergencyEvent, getPatientAddress, getGoogleMapsLocationLink } from '../utils/careCircleStorage';
 import { SymptomAnalysisResult } from '../utils/emergencyDetection';
 
 export function EmergencyActionModal() {
@@ -9,6 +9,8 @@ export function EmergencyActionModal() {
   const [callUrl, setCallUrl] = useState<string>('');
   const [whatsappUrl, setWhatsappUrl] = useState<string>('');
   const [smsUrl, setSmsUrl] = useState<string>('');
+  const [location, setLocation] = useState<string>('');
+  const [mapsUrl, setMapsUrl] = useState<string>('');
   const [partsUpdated, setPartsUpdated] = useState<string[]>([]);
   const [actionReport, setActionReport] = useState<string>('');
   const [isDialing, setIsDialing] = useState(false);
@@ -18,11 +20,16 @@ export function EmergencyActionModal() {
       const detail = e.detail;
       if (!detail) return;
 
+      const addr = detail.location || getPatientAddress();
+      const mUrl = detail.mapsUrl || getGoogleMapsLocationLink(addr);
+
       setAnalysis(detail.symptomAnalysis || null);
       setContact(detail.contact || null);
       setCallUrl(detail.callUrl || '');
       setWhatsappUrl(detail.whatsappUrl || '');
       setSmsUrl(detail.smsUrl || '');
+      setLocation(addr);
+      setMapsUrl(mUrl);
       setPartsUpdated(detail.partsUpdated || []);
       setActionReport(detail.actionReport || '');
       setIsOpen(true);
@@ -269,6 +276,73 @@ export function EmergencyActionModal() {
           </div>
         </div>
 
+        {/* Live Patient Location & Google Maps Card */}
+        <div
+          style={{
+            background: '#f0fdf4',
+            border: '1.5px solid #bbf7d0',
+            borderRadius: 14,
+            padding: '10px 12px',
+            marginBottom: 12,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+          }}
+        >
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <p style={{ fontSize: 10, fontWeight: 800, color: '#166534', margin: 0, textTransform: 'uppercase' }}>
+              📍 Dispatched Location (Included in Alert):
+            </p>
+            <p style={{ fontSize: 11.5, fontWeight: 700, color: '#14532d', margin: '2px 0 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {location || getPatientAddress()}
+            </p>
+          </div>
+          <a
+            href={mapsUrl || getGoogleMapsLocationLink(location || getPatientAddress())}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              flexShrink: 0,
+              fontSize: 10.5,
+              fontWeight: 800,
+              background: '#15803d',
+              color: 'white',
+              padding: '6px 10px',
+              borderRadius: 8,
+              textDecoration: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              boxShadow: '0 2px 6px rgba(21, 128, 61, 0.25)',
+            }}
+          >
+            <span>🗺️ Maps ↗</span>
+          </a>
+        </div>
+
+        {/* Immediate Care Guidance Card */}
+        <div
+          style={{
+            background: '#fffbeb',
+            border: '1.5px solid #fde68a',
+            borderRadius: 14,
+            padding: '10px 12px',
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <span style={{ fontSize: 13 }}>🩺</span>
+            <span style={{ fontSize: 10.5, fontWeight: 900, color: '#92400e', textTransform: 'uppercase' }}>
+              Immediate Care Guidance:
+            </span>
+          </div>
+          <p style={{ fontSize: 11, color: '#78350f', lineHeight: 1.45, margin: 0 }}>
+            {analysis?.recommendedAction ||
+              'Keep patient seated upright and calm. Loosen tight clothing, ensure ventilation, and check vitals. Have BP medication (Amlodipine 5mg) handy. If symptoms persist > 5 mins, call 108/112.'}
+          </p>
+        </div>
+
         {/* Real Communication Action Status */}
         <div
           style={{
@@ -283,10 +357,10 @@ export function EmergencyActionModal() {
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#059669', fontWeight: 800 }}>
             <span>✓</span>
-            <span>Emergency dialer & WhatsApp alert dispatched automatically.</span>
+            <span>Emergency dialer & WhatsApp alert dispatched with live location.</span>
           </div>
           <span style={{ fontSize: 10, color: '#64748b' }}>
-            Tap below to redial or open WhatsApp directly if dialer did not open automatically.
+            Tap below to redial or open WhatsApp directly with prefilled emergency location.
           </span>
         </div>
 
@@ -338,7 +412,7 @@ export function EmergencyActionModal() {
             }}
           >
             <span style={{ fontSize: 16 }}>💬</span>
-            <span>Send WhatsApp Emergency Alert</span>
+            <span>Send WhatsApp Emergency Alert with Location</span>
           </button>
 
           {/* Direct SMS and 112 backup in row */}

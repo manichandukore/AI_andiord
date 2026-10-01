@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { getCareCircleMembers, getPrimaryEmergencyContact, getPatientName, recordEmergencyEvent } from '../utils/careCircleStorage';
+import {
+  getCareCircleMembers,
+  getPrimaryEmergencyContact,
+  getPatientName,
+  getPatientAddress,
+  getGoogleMapsLocationLink,
+  recordEmergencyEvent,
+} from '../utils/careCircleStorage';
 
 interface EmergencySOSModalProps {
   isOpen: boolean;
@@ -49,6 +56,9 @@ export function EmergencySOSModal({
       window.location.href = `tel:${cleanPhone}`;
     } catch {}
 
+    const address = getPatientAddress();
+    const mapsLink = getGoogleMapsLocationLink(address);
+
     // Record emergency incident
     recordEmergencyEvent({
       id: `emg-sos-${Date.now()}`,
@@ -66,7 +76,7 @@ export function EmergencySOSModal({
       callInitiated: true,
       messageDispatched: true,
       channelUsed: 'WhatsApp Gateway + Native Call',
-      summary: `Urgent SOS dispatched for ${patient}. Primary responder: ${primary.name} (${primary.role}).`,
+      summary: `Urgent SOS dispatched for ${patient}. Primary responder: ${primary.name} (${primary.role}). Location: ${address}.`,
     });
 
     try {
@@ -74,10 +84,13 @@ export function EmergencySOSModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          symptomText: 'Emergency SOS Alert',
+          symptomText: 'Emergency 1-Touch SOS Alert',
           contacts: members,
           userName: patient,
-          location: 'Home (Flat 302, Hyderabad)',
+          location: address,
+          mapsUrl: mapsLink,
+          careInstructions:
+            '• Immediate caregiver response requested.\n• Keep patient in a comfortable, seated posture.\n• Check vital signs (BP & Pulse).\n• Have emergency GP contact ready (Dr. Roy Pillai).',
         }),
       });
       const data = await res.json();

@@ -3,8 +3,10 @@ import {
   analyzeHealthSymptoms,
   detectContactRequest,
   executeEmergencyWorkflow,
+  executeCareMessageWorkflow,
 } from '../utils/emergencyDetection';
-import { detectPainProgressInText, syncHealthProgress } from '../utils/painDetection';
+import { detectPainInText, detectPainProgressInText, syncHealthProgress, PainStatus } from '../utils/painDetection';
+import { getPatientAddress, getGoogleMapsLocationLink } from '../utils/careCircleStorage';
 
 interface VoiceCallModalProps {
   isOpen: boolean;
@@ -463,16 +465,56 @@ export function VoiceCallModal({
           })
         );
         return;
+      } else {
+        // Message requested (e.g. "Message my son with location", "put in the care while sending message to son with location")
+        const careResult = await executeCareMessageWorkflow(contactReq, userName, text);
+        const reply =
+          selectedLang === 'te-IN'
+            ? careResult.spokenReply.telugu
+            : selectedLang === 'hi-IN'
+            ? careResult.spokenReply.hindi
+            : careResult.spokenReply.english;
+
+        setConversation([...newConv, { role: 'assistant', content: reply, source: 'fallback' }]);
+        setStatusMessage(`💬 Sent message with care & location to ${member.name}...`);
+
+        try {
+          window.open(careResult.whatsappUrl, '_blank');
+        } catch {}
+        return;
       }
     }
 
-    // 2. Health Symptom & Severity Analysis
+    // 2. First check if user communicated pain progress (resolved -> remove dot, improving -> green dot, moderate -> orange dot)
+    const progressCheck = detectPainProgressInText(text);
+    if (progressCheck) {
+      syncHealthProgress(progressCheck.bodyPart, progressCheck.status, text);
+      const spoken =
+        selectedLang === 'te-IN'
+          ? progressCheck.spokenReply.telugu
+          : selectedLang === 'hi-IN'
+          ? progressCheck.spokenReply.hindi
+          : progressCheck.spokenReply.english;
+
+      setConversation([...newConv, { role: 'assistant', content: spoken, source: 'fallback' }]);
+      setStatusMessage(
+        progressCheck.status === 'resolved'
+          ? `⚪ Pain Resolved: ${progressCheck.bodyPart.toUpperCase()} dot removed`
+          : progressCheck.status === 'improving'
+          ? `🟢 Pain Improving: ${progressCheck.bodyPart.toUpperCase()} marked green`
+          : `🟠 Moderate Pain: ${progressCheck.bodyPart.toUpperCase()} marked orange`
+      );
+      return;
+    }
+
+    // 3. Health Symptom & Severity Analysis
     const symptomAnalysis = analyzeHealthSymptoms(text, userName);
     if (symptomAnalysis.hasSymptom) {
+      const dotStatus: PainStatus = symptomAnalysis.severity === 'MODERATE' ? 'moderate' : 'active';
       // Automatic Body Map Dot Updates without requiring manual dot addition
-      syncHealthProgress(symptomAnalysis.primaryBodyPart, 'active', text);
+      syncHealthProgress(symptomAnalysis.primaryBodyPart, dotStatus, text);
       for (const sec of symptomAnalysis.secondaryBodyParts) {
-        syncHealthProgress(sec, 'active', text);
+        syncHealthProgress(sec, dotStatus, text);
       }
 
       if (symptomAnalysis.isEmergency) {
@@ -488,12 +530,11 @@ export function VoiceCallModal({
         setStatusMessage(`🚨 Emergency Alert: ${symptomAnalysis.symptomsDetected.join(' + ')}`);
         return;
       }
-    }
-
-    // 3. Progress check (recovery / resolved)
-    const progressCheck = detectPainProgressInText(text);
-    if (progressCheck) {
-      syncHealthProgress(progressCheck.bodyPart, progressCheck.status, text);
+    } else {
+      const painCheck = detectPainInText(text);
+      if (painCheck) {
+        syncHealthProgress(painCheck.bodyPart, painCheck.dotStatus, text);
+      }
     }
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {

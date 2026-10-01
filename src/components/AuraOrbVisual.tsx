@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useWakeWord, getAppLanguage, getRecordsAndTabletsSummary } from '../context/WakeWordContext';
-import { detectPainInText, detectPainProgressInText, syncHealthProgress } from '../utils/painDetection';
+import { detectPainInText, detectPainProgressInText, syncHealthProgress, PainStatus } from '../utils/painDetection';
 import {
   analyzeHealthSymptoms,
   detectContactRequest,
   executeEmergencyWorkflow,
+  executeCareMessageWorkflow,
 } from '../utils/emergencyDetection';
+import { getPatientAddress, getGoogleMapsLocationLink } from '../utils/careCircleStorage';
 
 interface AuraOrbVisualProps {
   userName?: string;
@@ -446,21 +448,17 @@ export function AuraOrbVisual({
         );
         return;
       } else {
-        // Message requested
-        const alertMsg = contactReq.customMessage
-          ? `Message from ${userName}: ${contactReq.customMessage}`
-          : `Urgent message from ${userName}: Please check on her immediately.`;
-        const waUrl = `https://wa.me/${cleanPhone.replace(/^\+/, '')}?text=${encodeURIComponent(alertMsg)}`;
-
+        // Message requested (e.g. "Message my son with location", "put in the care while sending message to son with location")
+        const careResult = await executeCareMessageWorkflow(contactReq, userName, text);
         const spokenMsg =
           liveLang === 'te-IN'
-            ? `మీ ${member.role} ${member.name} గారికి సందేశం పంపాను.`
+            ? careResult.spokenReply.telugu
             : liveLang === 'hi-IN'
-            ? `आपके ${member.role} ${member.name} जी को संदेश भेज दिया गया है।`
-            : `Emergency message dispatched to ${member.name} (${member.role}).`;
+            ? careResult.spokenReply.hindi
+            : careResult.spokenReply.english;
 
         setLastModelMessage(spokenMsg);
-        setStatusText(`💬 SENT MESSAGE TO ${member.name.toUpperCase()}`);
+        setStatusText(`💬 SENT MESSAGE WITH CARE & LOCATION TO ${member.name.toUpperCase()}`);
 
         if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
           const u = new SpeechSynthesisUtterance(spokenMsg);
@@ -469,19 +467,48 @@ export function AuraOrbVisual({
         }
 
         try {
-          window.open(waUrl, '_blank');
+          window.open(careResult.whatsappUrl, '_blank');
         } catch {}
         return;
       }
     }
 
-    // 2. Health Symptom & Severity Analysis (Normal, Mild, Moderate, Serious/Emergency)
+    // 2. First check if user communicated pain progress (resolved -> remove dot, improving -> green dot, moderate -> orange dot)
+    const progressCheck = detectPainProgressInText(text);
+    if (progressCheck) {
+      syncHealthProgress(progressCheck.bodyPart, progressCheck.status, text);
+      const spoken =
+        liveLang === 'te-IN'
+          ? progressCheck.spokenReply.telugu
+          : liveLang === 'hi-IN'
+          ? progressCheck.spokenReply.hindi
+          : progressCheck.spokenReply.english;
+
+      setLastModelMessage(spoken);
+      setStatusText(
+        progressCheck.status === 'resolved'
+          ? `⚪ PAIN RESOLVED: ${progressCheck.bodyPart.toUpperCase()} DOT REMOVED`
+          : progressCheck.status === 'improving'
+          ? `🟢 PAIN IMPROVING: ${progressCheck.bodyPart.toUpperCase()} MARKED GREEN`
+          : `🟠 MODERATE PAIN: ${progressCheck.bodyPart.toUpperCase()} MARKED ORANGE`
+      );
+
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        const u = new SpeechSynthesisUtterance(spoken);
+        u.lang = liveLang;
+        window.speechSynthesis.speak(u);
+      }
+      return;
+    }
+
+    // 3. Health Symptom & Severity Analysis (Normal, Mild, Moderate, Serious/Emergency)
     const symptomAnalysis = analyzeHealthSymptoms(text, userName);
     if (symptomAnalysis.hasSymptom) {
+      const dotStatus: PainStatus = symptomAnalysis.severity === 'MODERATE' ? 'moderate' : 'active';
       // Automatic Body Map Dot Updates without requiring manual dot addition
-      syncHealthProgress(symptomAnalysis.primaryBodyPart, 'active', text);
+      syncHealthProgress(symptomAnalysis.primaryBodyPart, dotStatus, text);
       for (const sec of symptomAnalysis.secondaryBodyParts) {
-        syncHealthProgress(sec, 'active', text);
+        syncHealthProgress(sec, dotStatus, text);
       }
 
       // If SERIOUS or EMERGENCY condition detected
@@ -504,16 +531,10 @@ export function AuraOrbVisual({
         }
         return;
       }
-    }
-
-    // 3. Check if user communicated pain progress (resolved -> remove dot, improving -> green dot, active -> red dot)
-    const progressCheck = detectPainProgressInText(text);
-    if (progressCheck) {
-      syncHealthProgress(progressCheck.bodyPart, progressCheck.status, text);
     } else {
       const painCheck = detectPainInText(text);
       if (painCheck) {
-        syncHealthProgress(painCheck.bodyPart, 'active', text);
+        syncHealthProgress(painCheck.bodyPart, painCheck.dotStatus, text);
       }
     }
 
